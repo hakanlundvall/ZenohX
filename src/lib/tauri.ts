@@ -454,15 +454,58 @@ export async function onZenohSample(
   });
 }
 
+declare global {
+  var __zenohx_samples_batched_unlisten: UnlistenFn | undefined;
+  var __zenohx_samples_batched_promise: Promise<UnlistenFn> | undefined;
+}
+
 /**
  * Subscribes to high-throughput batched Zenoh samples (frame-rate aligned).
+ * Ensures a single active event listener across HMR reloads and rapid remounts.
  */
 export async function onZenohSamplesBatched(
   callback: (samples: ZenohSample[]) => void
 ): Promise<UnlistenFn> {
-  return listen<ZenohSample[]>('zenohx://samples-batched', (event) => {
+  // Clean up any globally active listener (e.g. from previous HMR or duplicate call)
+  if (typeof globalThis !== 'undefined') {
+    if (globalThis.__zenohx_samples_batched_unlisten) {
+      try {
+        globalThis.__zenohx_samples_batched_unlisten();
+      } catch {
+        // Ignore
+      }
+      globalThis.__zenohx_samples_batched_unlisten = undefined;
+    }
+    if (globalThis.__zenohx_samples_batched_promise) {
+      try {
+        const prev = await globalThis.__zenohx_samples_batched_promise;
+        prev();
+      } catch {
+        // Ignore
+      }
+      globalThis.__zenohx_samples_batched_promise = undefined;
+    }
+  }
+
+  const promise = listen<ZenohSample[]>('zenohx://samples-batched', (event) => {
     callback(event.payload);
   });
+  if (typeof globalThis !== 'undefined') {
+    globalThis.__zenohx_samples_batched_promise = promise;
+  }
+
+  const unlisten = await promise;
+  if (typeof globalThis !== 'undefined') {
+    globalThis.__zenohx_samples_batched_promise = undefined;
+    globalThis.__zenohx_samples_batched_unlisten = unlisten;
+  }
+
+  return () => {
+    if (typeof globalThis !== 'undefined' && globalThis.__zenohx_samples_batched_unlisten === unlisten) {
+      globalThis.__zenohx_samples_batched_unlisten = undefined;
+    }
+    unlisten();
+  };
 }
 
 /**

@@ -58,6 +58,7 @@ export interface PayloadViewerProps {
   showMetrics?: boolean;
   maxHeight?: string | number;
   keyExpr?: string;
+  protoTypeName?: string | null;
 }
 
 /**
@@ -369,6 +370,7 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
   showMetrics = true,
   maxHeight = '420px',
   keyExpr,
+  protoTypeName,
 }) => {
   const bytes = useMemo(() => bytesToUint8Array(payload), [payload]);
   const byteCount = bytes.length;
@@ -388,22 +390,31 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
 
   // Find matching topic mapping if keyExpr is provided
   const mappedType = useMemo(() => {
+    if (protoTypeName) return protoTypeName;
     if (!keyExpr) return undefined;
     const mapping = findMappingForKey(keyExpr);
     return mapping?.messageTypeName;
-  }, [keyExpr, mappings, findMappingForKey]);
+  }, [keyExpr, protoTypeName, mappings, findMappingForKey]);
 
   // Selected proto message type state
   const [selectedProtoType, setSelectedProtoType] = useState<string>(() => {
+    if (protoTypeName) return protoTypeName;
     if (mappedType) return mappedType;
     const all = getAllMessageTypes();
     return all.length > 0 ? all[0].typeName : '';
   });
 
   const prevKeyExprRef = useRef<string | undefined>(keyExpr);
+  const prevProtoTypePropRef = useRef<string | undefined | null>(protoTypeName);
 
-  // Sync selectedProtoType on keyExpr change, mapping change, or schema reload
+  // Sync selectedProtoType on protoTypeName prop change, keyExpr change, mapping change, or schema reload
   useEffect(() => {
+    if (protoTypeName && protoTypeName !== prevProtoTypePropRef.current) {
+      prevProtoTypePropRef.current = protoTypeName;
+      setSelectedProtoType(protoTypeName);
+      return;
+    }
+
     if (prevKeyExprRef.current !== keyExpr) {
       prevKeyExprRef.current = keyExpr;
       if (mappedType) {
@@ -426,7 +437,7 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
         setSelectedProtoType('');
       }
     }
-  }, [keyExpr, mappedType, allMessageTypes, selectedProtoType]);
+  }, [keyExpr, protoTypeName, mappedType, allMessageTypes, selectedProtoType]);
 
   // Auto-detect initial tab if not explicitly given
   const initialTab = useMemo<ViewerTab>(() => {
@@ -463,7 +474,7 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
 
   // Decode content based on active tab
   const tabData = useMemo(() => {
-    if (byteCount === 0) {
+    if (byteCount === 0 && activeTab !== 'protobuf') {
       return { text: '', parsedJson: null, error: null };
     }
 
@@ -488,6 +499,13 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
 
       case 'protobuf': {
         if (schemas.length === 0) {
+          if (byteCount === 0) {
+            return {
+              text: '{}',
+              parsedJson: {},
+              error: null,
+            };
+          }
           return {
             text: toHexDump(bytes),
             parsedJson: null,
@@ -496,6 +514,13 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
         }
 
         if (!selectedProtoType) {
+          if (byteCount === 0) {
+            return {
+              text: '{}',
+              parsedJson: {},
+              error: null,
+            };
+          }
           return {
             text: toHexDump(bytes),
             parsedJson: null,
@@ -515,6 +540,13 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
             error: null,
           };
         } catch (err: any) {
+          if (byteCount === 0) {
+            return {
+              text: '{}',
+              parsedJson: {},
+              error: null,
+            };
+          }
           return {
             text: toHexDump(bytes),
             parsedJson: null,
@@ -571,9 +603,9 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
   const isStructuredTab = activeTab === 'json' || activeTab === 'cbor' || activeTab === 'protobuf';
 
   return (
-    <div className={`flex flex-col rounded-md border bg-card text-card-foreground shadow-xs ${className}`}>
+    <div className={`flex flex-col rounded-md border bg-card text-card-foreground shadow-xs overflow-hidden ${className}`}>
         {/* Header Toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-1.5 shrink-0">
           {/* Format Dropdown Selector */}
           <div className="flex items-center gap-1.5">
             <Select value={activeTab} onValueChange={(val) => setActiveTab(val as ViewerTab)}>
@@ -713,7 +745,7 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
 
         {/* Error / Warning Notice if decode failed */}
         {tabData.error && (
-          <div className="flex items-center gap-1.5 border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+          <div className="flex items-center gap-1.5 border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive shrink-0">
             <AlertCircle className="w-3.5 h-3.5 shrink-0" />
             <span className="truncate">{tabData.error}</span>
           </div>
@@ -721,10 +753,12 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
 
         {/* Main Payload Content Body */}
         <div
-          className="overflow-auto p-3 font-mono text-xs bg-background"
-          style={{ maxHeight }}
+          className={`overflow-auto p-3 font-mono text-xs bg-background ${
+            !maxHeight || maxHeight === '100%' ? 'flex-1 min-h-0' : ''
+          }`}
+          style={maxHeight && maxHeight !== '100%' ? { maxHeight } : undefined}
         >
-          {byteCount === 0 ? (
+          {byteCount === 0 && (activeTab !== 'protobuf' || tabData.parsedJson === null) ? (
             <div className="flex items-center justify-center p-6 text-muted-foreground italic text-xs">
               Payload is empty (0 bytes)
             </div>
@@ -735,7 +769,7 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
           ) : (
             <pre
               className={`font-mono text-xs text-foreground select-text ${
-                wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'
+                wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'
               }`}
             >
               {isStructuredTab && tabData.parsedJson !== null ? (

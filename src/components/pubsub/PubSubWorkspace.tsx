@@ -15,14 +15,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Layers,
-  Info,
-  Clock,
-  ArrowDownLeft,
-  ArrowUpRight,
-  X,
   AlertCircle,
-  Maximize2,
-  Minimize2,
   Settings2,
   MoreVertical,
   Play,
@@ -39,7 +32,7 @@ import { openProfileInNewWindow } from '../../lib/tauri';
 import { SubscriptionList } from './SubscriptionList';
 import { MessageList } from './MessageList';
 import { PublishBar } from './PublishBar';
-import { PayloadViewer } from '../viewer/PayloadViewer';
+import { MessageDetails, fromMessageItem } from '../viewer/MessageDetails';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { ResizeHandle } from '../ui/resize-handle';
@@ -52,12 +45,6 @@ import {
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { ProfileModal } from '../connections/ProfileModal';
-import {
-  formatByteSize,
-  formatFullDateTime,
-  getTopicColorTag,
-  normalizeEncoding,
-} from '../../lib/formatters';
 
 interface PubSubWorkspaceProps {
   className?: string;
@@ -69,7 +56,6 @@ export const PubSubWorkspace: React.FC<PubSubWorkspaceProps> = ({ className = ''
   const profiles = useConnectionStore((s) => s.profiles);
   const activeSessions = useConnectionStore((s) => s.activeSessions);
   const sessionToProfile = useConnectionStore((s) => s.sessionToProfile);
-  const scoutedNodes = useConnectionStore((s) => s.scoutedNodes);
   const connect = useConnectionStore((s) => s.connect);
   const disconnect = useConnectionStore((s) => s.disconnect);
   const saveProfile = useConnectionStore((s) => s.saveProfile);
@@ -113,24 +99,16 @@ export const PubSubWorkspace: React.FC<PubSubWorkspaceProps> = ({ className = ''
         isOutgoing: true,
       };
     } else {
-      let title = 'Remote Zenoh Publisher';
-      if (selectedMessage.sourceId) {
-        const matchingScout = scoutedNodes.find((n) => n.zid === selectedMessage.sourceId);
-        if (matchingScout?.what) {
-          title = `${matchingScout.what} (${selectedMessage.sourceId.slice(0, 8)})`;
-        } else {
-          title = `Remote Publisher (${selectedMessage.sourceId.slice(0, 8)})`;
-        }
-      }
+      const fullZid = selectedMessage.sourceId || selectedMessage.senderZid || 'Unknown / Anonymous';
       return {
-        title,
+        title: fullZid,
         subtitle: 'Received from network',
         profileName: msgProfile?.name,
-        zid: selectedMessage.sourceId,
+        zid: selectedMessage.sourceId || selectedMessage.senderZid,
         isOutgoing: false,
       };
     }
-  }, [selectedMessage, profiles, sessionToProfile, selectedProfileId, activeSessions, scoutedNodes]);
+  }, [selectedMessage, profiles, sessionToProfile, selectedProfileId, activeSessions]);
 
   // Auto load message history and subscription presets from SQLite when profile/session changes
   useEffect(() => {
@@ -142,9 +120,18 @@ export const PubSubWorkspace: React.FC<PubSubWorkspaceProps> = ({ className = ''
 
   // Panel layout and modal toggles
   const [showSubscriptionPanel, setShowSubscriptionPanel] = useState<boolean>(true);
-  const [inspectorExpanded, setInspectorExpanded] = useState<boolean>(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
   const [copiedZid, setCopiedZid] = useState<boolean>(false);
+
+  // Unified message item for inspector
+  const unifiedSelectedMessage = useMemo(() => {
+    if (!selectedMessage) return null;
+    return fromMessageItem(selectedMessage, {
+      senderTitle: selectedMessageSender?.title,
+      senderSubtitle: selectedMessageSender?.subtitle,
+      profileName: selectedMessageSender?.profileName,
+    });
+  }, [selectedMessage, selectedMessageSender]);
 
   const handleCopyZid = () => {
     if (session?.zid) {
@@ -205,20 +192,6 @@ export const PubSubWorkspace: React.FC<PubSubWorkspaceProps> = ({ className = ''
     minSize: 200,
     maxSize: 450,
     storageKey: 'zenohx_pubsub_sub_width',
-  });
-
-  // Resizable Inspector Right Panel
-  const {
-    size: inspectorWidth,
-    isDragging: isInspectorDragging,
-    startDragging: startInspectorDragging,
-    resetToDefault: resetInspectorWidth,
-  } = useResizable({
-    initialSize: 380,
-    minSize: 280,
-    maxSize: 700,
-    reverse: true,
-    storageKey: 'zenohx_pubsub_inspector_width',
   });
 
   // Stats for the workspace
@@ -448,233 +421,14 @@ export const PubSubWorkspace: React.FC<PubSubWorkspaceProps> = ({ className = ''
               />
             </div>
 
-            {/* Right: Message Inspector Panel (when a message is selected) */}
-            {selectedMessage && (
-              <>
-                <ResizeHandle
-                  isDragging={isInspectorDragging}
-                  onMouseDown={startInspectorDragging}
-                  onReset={resetInspectorWidth}
-                  className="hidden md:flex"
-                />
-                <div
-                  style={{ width: `${inspectorExpanded ? Math.max(580, inspectorWidth) : inspectorWidth}px` }}
-                  className="border-l border-border bg-card flex flex-col shrink-0 h-full overflow-hidden max-md:fixed max-md:inset-0 max-md:z-50 max-md:w-full max-w-full md:max-w-[75vw] min-w-[280px]"
-                >
-                {/* Inspector Header */}
-                <div className="flex items-center justify-between p-2.5 border-b bg-muted/20">
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    <Info className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                    <span className="font-semibold text-xs text-foreground truncate">
-                      Message Details
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    {/* Expand/Contract Inspector Width (desktop only) */}
-                    <button
-                      type="button"
-                      onClick={() => setInspectorExpanded(!inspectorExpanded)}
-                      className="hidden md:inline-flex p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                      title={inspectorExpanded ? 'Narrow inspector' : 'Widen inspector'}
-                    >
-                      {inspectorExpanded ? (
-                        <Minimize2 className="w-3.5 h-3.5" />
-                      ) : (
-                        <Maximize2 className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-
-                    {/* Close Inspector */}
-                    <button
-                      type="button"
-                      onClick={() => selectMessage(null)}
-                      className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                      title="Close inspector"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Inspector Message Metadata Overview */}
-                <div className="p-3 border-b bg-muted/10 space-y-2.5 text-xs overflow-y-auto max-h-[45vh] md:max-h-none shrink-0">
-                  {/* Key Expression */}
-                  <div>
-                    <div className="text-[10px] uppercase font-semibold text-muted-foreground mb-0.5 flex items-center justify-between">
-                      <span>Key Expression</span>
-                      <button
-                        type="button"
-                        onClick={() => navigator.clipboard.writeText(selectedMessage.keyExpr)}
-                        className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
-                        title="Copy key expression"
-                      >
-                        <Copy className="w-2.5 h-2.5" />
-                        <span>Copy</span>
-                      </button>
-                    </div>
-                    <div className="font-mono text-xs font-medium text-foreground break-all bg-muted/40 p-1.5 rounded border">
-                      {selectedMessage.keyExpr}
-                    </div>
-                  </div>
-
-                  {/* Sender / Origin Information */}
-                  {selectedMessageSender && (
-                    <div>
-                      <div className="text-[10px] uppercase font-semibold text-muted-foreground mb-0.5 flex items-center justify-between">
-                        <span>Sender / Origin</span>
-                        <span className="text-[9px] text-muted-foreground font-normal">
-                          {selectedMessageSender.subtitle}
-                        </span>
-                      </div>
-                      <div className="p-2 rounded bg-muted/40 border space-y-1.5 font-mono text-[11px]">
-                        <div className="flex items-center gap-1.5 font-medium text-foreground">
-                          {selectedMessageSender.isOutgoing ? (
-                            <>
-                              <ArrowUpRight className="w-3.5 h-3.5 text-purple-500 shrink-0" />
-                              <span className="text-purple-600 dark:text-purple-400 font-semibold truncate">
-                                {selectedMessageSender.title}
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              <ArrowDownLeft className="w-3.5 h-3.5 text-sky-500 shrink-0" />
-                              <span className="text-sky-600 dark:text-sky-400 font-semibold truncate">
-                                {selectedMessageSender.title}
-                              </span>
-                            </>
-                          )}
-                        </div>
-
-                        <div className="text-[10px] text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 pt-1 border-t border-border/50">
-                          {selectedMessageSender.zid && (
-                            <div className="flex items-center gap-1">
-                              <span className="text-muted-foreground">
-                                {selectedMessageSender.isOutgoing ? 'Session ZID:' : 'Publisher ZID:'}
-                              </span>
-                              <span className="font-semibold text-foreground break-all">{selectedMessageSender.zid}</span>
-                            </div>
-                          )}
-                          <div className="flex items-center gap-1">
-                            <span className="text-muted-foreground">Session:</span>
-                            <span className="font-semibold text-foreground">{selectedMessage.sessionId ? selectedMessage.sessionId.slice(0, 8) : 'N/A'}</span>
-                          </div>
-                          {selectedMessageSender.profileName && (
-                            <div className="flex items-center gap-1">
-                              <span className="text-muted-foreground">Profile:</span>
-                              <span className="font-semibold text-foreground">{selectedMessageSender.profileName}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Matched Subscription Tag */}
-                  {(() => {
-                    const { color: subColor, matchedSub } = getTopicColorTag(
-                      subscriptions,
-                      selectedMessage.keyExpr,
-                      selectedMessage.direction,
-                      selectedMessage.profileId || selectedProfileId,
-                      selectedMessage.sessionId || sessionId
-                    );
-                    if (!matchedSub) return null;
-                    return (
-                      <div>
-                        <div className="text-[10px] uppercase font-semibold text-muted-foreground mb-0.5">
-                          Matched Subscription Topic
-                        </div>
-                        <div className="flex items-center gap-1.5 font-mono text-xs p-1.5 rounded bg-muted/40 border">
-                          <span
-                            className="h-2.5 w-2.5 rounded-full shrink-0 shadow-xs"
-                            style={{ backgroundColor: subColor }}
-                          />
-                          <span className="font-semibold text-foreground truncate">{matchedSub.keyExpr}</span>
-                          <span className="text-[10px] text-muted-foreground ml-auto uppercase font-mono shrink-0">
-                            {String(matchedSub.encoding || 'raw')}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Meta pills grid: Direction, Encoding, Payload Size, Timestamp */}
-                  <div className="grid grid-cols-2 gap-2 pt-0.5">
-                    <div>
-                      <div className="text-[10px] uppercase font-semibold text-muted-foreground mb-0.5">
-                        Direction
-                      </div>
-                      <div className="flex items-center gap-1 font-mono text-xs">
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] font-mono font-semibold uppercase px-1.5 py-0 border ${
-                            selectedMessage.direction === 'incoming'
-                              ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30'
-                              : 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/30'
-                          }`}
-                        >
-                          {selectedMessage.direction === 'incoming' ? (
-                            <ArrowDownLeft className="w-3 h-3 mr-0.5 inline-block text-sky-500" />
-                          ) : (
-                            <ArrowUpRight className="w-3 h-3 mr-0.5 inline-block text-purple-500" />
-                          )}
-                          {selectedMessage.direction === 'incoming' ? 'IN' : 'OUT'}
-                        </Badge>
-                        {selectedMessage.kind === 'delete' && (
-                          <Badge variant="destructive" className="text-[10px] px-1 py-0 uppercase font-mono">
-                            DELETE
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-[10px] uppercase font-semibold text-muted-foreground mb-0.5">
-                        Encoding
-                      </div>
-                      <div className="font-mono text-xs uppercase font-medium text-foreground">
-                        {normalizeEncoding(selectedMessage.encoding, selectedMessage.payload)}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-[10px] uppercase font-semibold text-muted-foreground mb-0.5">
-                        Payload Size
-                      </div>
-                      <div className="font-mono text-xs font-medium text-foreground">
-                        {formatByteSize(selectedMessage.payload?.length || 0)}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-[10px] uppercase font-semibold text-muted-foreground mb-0.5">
-                        Timestamp
-                      </div>
-                      <div className="font-mono text-[11px] text-foreground flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-muted-foreground shrink-0" />
-                        <span className="truncate" title={formatFullDateTime(selectedMessage.timestamp)}>
-                          {formatFullDateTime(selectedMessage.timestamp)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Inspector Payload Viewer Area */}
-                <div className="flex-1 min-h-0 flex flex-col p-3 overflow-y-auto">
-                  <div className="text-[10px] uppercase font-semibold text-muted-foreground mb-1.5">
-                    Payload Content
-                  </div>
-                  <PayloadViewer
-                    payload={selectedMessage.payload}
-                    encoding={normalizeEncoding(selectedMessage.encoding, selectedMessage.payload)}
-                    showMetrics={true}
-                    maxHeight="100%"
-                  />
-                </div>
-              </div>
-            </>
+            {/* Right: Message Details Inspector */}
+            {unifiedSelectedMessage && (
+              <MessageDetails
+                data={unifiedSelectedMessage}
+                title="Message Details"
+                onClose={() => selectMessage(null)}
+                storageKey="zenohx_pubsub_inspector_width"
+              />
             )}
           </div>
 

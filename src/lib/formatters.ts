@@ -259,10 +259,6 @@ export function tryFormatProtobuf(
   options?: ProtoFormatOptions
 ): ParseResult {
   const bytes = bytesToUint8Array(input);
-  if (bytes.length === 0) {
-    return { success: true, formatted: '', data: null };
-  }
-
   const indent = options?.indent !== undefined ? options.indent : 2;
   let typeName = options?.protoTypeName;
   let root = options?.root;
@@ -284,6 +280,9 @@ export function tryFormatProtobuf(
   }
 
   if (!typeName) {
+    if (bytes.length === 0) {
+      return { success: true, formatted: '{}', data: {} };
+    }
     return {
       success: false,
       formatted: '',
@@ -296,6 +295,9 @@ export function tryFormatProtobuf(
     const formatted = JSON.stringify(data, null, indent);
     return { success: true, formatted, data };
   } catch (err: any) {
+    if (bytes.length === 0) {
+      return { success: true, formatted: '{}', data: {} };
+    }
     return {
       success: false,
       formatted: '',
@@ -318,11 +320,25 @@ export function formatPayload(
   options?: ProtoFormatOptions
 ): string {
   const bytes = bytesToUint8Array(payload);
+  const normalizedEncoding = (encoding || '').toLowerCase();
+
+  // If 0 bytes and protobuf, try formatting using schema/default mapping
+  if (
+    bytes.length === 0 &&
+    (normalizedEncoding === 'protobuf' ||
+      normalizedEncoding === 'proto' ||
+      normalizedEncoding === 'application/protobuf' ||
+      normalizedEncoding === 'application/x-protobuf')
+  ) {
+    const res = tryFormatProtobuf(bytes, { ...options, indent });
+    if (res.success && res.formatted) {
+      return res.formatted;
+    }
+  }
+
   if (bytes.length === 0) {
     return '';
   }
-
-  const normalizedEncoding = (encoding || '').toLowerCase();
 
   switch (normalizedEncoding) {
     case 'json': {
@@ -408,7 +424,9 @@ export function encodePayload(
     }
 
     case 'protobuf': {
-      const parse = tryParseJson(input);
+      const trimmed = (input || '').trim();
+      const jsonStr = trimmed.length === 0 ? '{}' : trimmed;
+      const parse = tryParseJson(jsonStr);
       if (!parse.success) {
         return {
           bytes: [],
@@ -434,6 +452,13 @@ export function encodePayload(
         root = options?.protoId
           ? useProtoStore.getState().getCompiledRoot(options.protoId) || useProtoStore.getState().getGlobalRoot()
           : useProtoStore.getState().getGlobalRoot();
+      }
+
+      if (!typeName && !options?.protoTypeName && !options?.keyExpr) {
+        const allTypes = useProtoStore.getState().getAllMessageTypes();
+        if (allTypes.length > 0) {
+          typeName = allTypes[0].typeName;
+        }
       }
 
       if (!typeName) {
@@ -671,12 +696,30 @@ export function getPayloadSnippet(
   maxLength: number = 120,
   options?: ProtoFormatOptions
 ): string {
+  const bytes = bytesToUint8Array(payload);
+  const enc = (encoding || '').toLowerCase();
+
+  // If Protobuf, attempt decode even for 0-byte payloads (which represent default/empty message)
+  if (
+    enc === 'protobuf' ||
+    enc === 'proto' ||
+    enc === 'application/protobuf' ||
+    enc === 'application/x-protobuf'
+  ) {
+    const res = tryFormatProtobuf(bytes, { ...options, indent: 0 });
+    if (res.success && res.data !== undefined && res.data !== null) {
+      try {
+        const compact = JSON.stringify(res.data);
+        return compact.length > maxLength ? `${compact.slice(0, maxLength)}…` : compact;
+      } catch {
+        return res.formatted.slice(0, maxLength);
+      }
+    }
+  }
+
   if (!payload || (Array.isArray(payload) && payload.length === 0) || (payload instanceof Uint8Array && payload.length === 0)) {
     return '(empty payload)';
   }
-
-  const bytes = bytesToUint8Array(payload);
-  const enc = (encoding || '').toLowerCase();
 
   if (enc === 'json') {
     const res = tryFormatJson(bytes, 0);
@@ -692,18 +735,6 @@ export function getPayloadSnippet(
 
   if (enc === 'cbor') {
     const res = tryFormatCbor(bytes, 0);
-    if (res.success && res.data !== undefined) {
-      try {
-        const compact = JSON.stringify(res.data);
-        return compact.length > maxLength ? `${compact.slice(0, maxLength)}…` : compact;
-      } catch {
-        return res.formatted.slice(0, maxLength);
-      }
-    }
-  }
-
-  if (enc === 'protobuf') {
-    const res = tryFormatProtobuf(bytes, { ...options, indent: 0 });
     if (res.success && res.data !== undefined) {
       try {
         const compact = JSON.stringify(res.data);

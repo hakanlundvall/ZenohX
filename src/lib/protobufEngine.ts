@@ -322,11 +322,18 @@ export function encodeProtobufPayload(
 
   let payloadObj = jsonData;
   if (typeof jsonData === 'string') {
-    try {
-      payloadObj = JSON.parse(jsonData);
-    } catch (err: any) {
-      throw new Error(`Failed to parse JSON input for Protobuf encoding: ${err?.message || err}`);
+    const trimmed = jsonData.trim();
+    if (trimmed.length === 0) {
+      payloadObj = {};
+    } else {
+      try {
+        payloadObj = JSON.parse(jsonData);
+      } catch (err: any) {
+        throw new Error(`Failed to parse JSON input for Protobuf encoding: ${err?.message || err}`);
+      }
     }
+  } else if (jsonData === null || jsonData === undefined) {
+    payloadObj = {};
   }
 
   if (!payloadObj || typeof payloadObj !== 'object') {
@@ -350,7 +357,7 @@ export function encodeProtobufPayload(
 export function decodeProtobufPayload(
   root: protobuf.Root,
   typeName: string,
-  bytes: Uint8Array | number[] | ArrayBuffer | Buffer,
+  bytes: Uint8Array | number[] | ArrayBuffer | Buffer | null | undefined,
   options?: protobuf.IConversionOptions
 ): Record<string, any> {
   const type = resolveProtoType(root, typeName);
@@ -365,6 +372,8 @@ export function decodeProtobufPayload(
   } else if (typeof Buffer !== 'undefined' && Buffer.isBuffer(bytes)) {
     const buf = bytes as any;
     uint8Bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  } else if (bytes === null || bytes === undefined) {
+    uint8Bytes = new Uint8Array(0);
   } else {
     throw new Error('Invalid byte buffer provided for Protobuf decoding');
   }

@@ -384,6 +384,7 @@ export interface MessageItem {
   priority?: string | null;
   express?: boolean | null;
   attachment?: number[] | null;
+  protoTypeName?: string | null;
 }
 
 export type QueryableReplyMode = 'payload' | 'script';

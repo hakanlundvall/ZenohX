@@ -75,14 +75,6 @@ function generateId(): string {
   });
 }
 
-interface OutgoingPubRecord {
-  sessionId: string;
-  keyExpr: string;
-  length: number;
-  timestamp: number;
-}
-
-const recentOutgoingPubs: OutgoingPubRecord[] = [];
 
 export interface MessageState {
   subscriptions: SubscriptionItem[];
@@ -162,6 +154,7 @@ export interface MessageState {
 }
 
 let listenerInitPromise: Promise<void> | null = null;
+let listenerCleanupRequested = false;
 
 export const useMessageStore = create<MessageState>((set, get) => ({
   subscriptions: [],
@@ -244,6 +237,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       return listenerInitPromise;
     }
 
+    listenerCleanupRequested = false;
     listenerInitPromise = (async () => {
       try {
         // Clean up any stale listeners first
@@ -260,41 +254,22 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         const unlistenBatched = await onZenohSamplesBatched((samples: ZenohSample[]) => {
           if (!samples || samples.length === 0) return;
 
-          const now = Date.now();
-          while (recentOutgoingPubs.length > 0 && now - recentOutgoingPubs[0].timestamp > 4000) {
-            recentOutgoingPubs.shift();
-          }
-
           const state = get();
           const newItems: MessageItem[] = [];
 
+          const connState = useConnectionStore.getState();
           for (const sample of samples) {
-            const profileId =
-              useConnectionStore.getState().sessionToProfile[sample.session_id] ||
-              useConnectionStore.getState().selectedProfileId ||
-              undefined;
-            const activeSession =
-              useConnectionStore.getState().getActiveSession(sample.session_id) ||
-              (profileId ? useConnectionStore.getState().getActiveSession(profileId) : undefined);
-            const localZid = activeSession?.zid?.toLowerCase();
-            const sourceZid = sample.source_id ? sample.source_id.toLowerCase() : undefined;
-
-            // Check if this sample is an echo/loopback of our own publication on the same session
-            const isSelfZid = Boolean(localZid && sourceZid && localZid === sourceZid);
-            const isSelfPublished =
-              isSelfZid ||
-              recentOutgoingPubs.some(
-                (p) =>
-                  p.sessionId === sample.session_id &&
-                  p.keyExpr === sample.key_expr &&
-                  p.length === (sample.payload?.length || 0) &&
-                  Math.abs(now - p.timestamp) < 2000
-              );
-
-            if (isSelfPublished) {
-              // This message was already added as 'outgoing' by publish();
-              // Skip adding duplicate 'incoming' loopback message.
-              continue;
+            let profileId: string | undefined = connState.sessionToProfile[sample.session_id];
+            if (!profileId) {
+              for (const [pid, sInfo] of Object.entries(connState.activeSessions)) {
+                if (sInfo.id === sample.session_id) {
+                  profileId = pid;
+                  break;
+                }
+              }
+            }
+            if (!profileId) {
+              profileId = connState.selectedProfileId || undefined;
             }
 
             const item: MessageItem = {
@@ -348,7 +323,16 @@ export const useMessageStore = create<MessageState>((set, get) => ({
           get().addMessagesBatch(newItems);
         });
 
-        set({ isListening: true, unlistenBatchedFn: unlistenBatched });
+        if (listenerCleanupRequested) {
+          try {
+            unlistenBatched();
+          } catch {
+            // Ignore
+          }
+          set({ isListening: false, unlistenBatchedFn: null });
+        } else {
+          set({ isListening: true, unlistenBatchedFn: unlistenBatched });
+        }
       } catch (err) {
         set({ error: `Failed to initialize sample listener: ${err}` });
       } finally {
@@ -360,6 +344,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
   },
 
   cleanupListener: () => {
+    listenerCleanupRequested = true;
     const unlisten = get().unlistenFn;
     if (unlisten) {
       try {
@@ -672,11 +657,24 @@ export const useMessageStore = create<MessageState>((set, get) => ({
           existingOrigin && existingOrigin !== 'any' ? { allowed_origin: existingOrigin } : undefined;
 
         if (activeSessionId && preset.auto_subscribe) {
-          try {
-            await subscribeKey(activeSessionId, preset.id, preset.key_expr, subOptions);
+          // If already active with the same ID on the same session, keep active without duplicate IPC call
+          if (existing?.active && existing.sessionId === activeSessionId && existing.id === preset.id) {
             isActive = true;
-          } catch {
-            isActive = false;
+          } else {
+            // Clean up any stale subscription ID for the same key if it changed
+            if (existing?.id && existing.id !== preset.id && existing.active && existing.sessionId === activeSessionId) {
+              try {
+                await unsubscribeKey(activeSessionId, existing.id);
+              } catch {
+                // Ignore
+              }
+            }
+            try {
+              await subscribeKey(activeSessionId, preset.id, preset.key_expr, subOptions);
+              isActive = true;
+            } catch {
+              isActive = false;
+            }
           }
         } else if (activeSessionId && existing?.active) {
           if (existing.sessionId !== activeSessionId) {
@@ -787,15 +785,6 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       const activeSession = useConnectionStore.getState().getActiveSession(sessionId);
       const pubTimestamp = Date.now();
 
-      recentOutgoingPubs.push({
-        sessionId,
-        keyExpr,
-        length: normalizedPayload.length,
-        timestamp: pubTimestamp,
-      });
-      if (recentOutgoingPubs.length > 200) {
-        recentOutgoingPubs.shift();
-      }
 
       const item: MessageItem = {
         id: generateId(),
@@ -811,6 +800,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         priority: options?.qos?.priority || undefined,
         express: options?.qos?.express || undefined,
         attachment: options?.qos?.attachment || undefined,
+        protoTypeName: options?.protoTypeName || undefined,
       };
 
       get().addMessage(item);
@@ -839,18 +829,38 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     set((state) => {
       // 1. Deduplicate new batch internally and against recent in-memory messages
       const recentWindow = state.messages.slice(-300);
-      const seenSignatures = new Set(
-        recentWindow.map(
-          (m) =>
-            `${m.sessionId || m.profileId || ''}:${m.keyExpr}:${m.timestamp}:${m.id || ''}:${m.direction}`
-        )
-      );
+      const conn = useConnectionStore.getState();
+
+      const resolveScope = (m: MessageItem) =>
+        m.profileId || (m.sessionId ? conn.sessionToProfile[m.sessionId] || m.sessionId : '');
+
+      const isDuplicate = (newMsg: MessageItem, existingList: MessageItem[]) => {
+        const newScope = resolveScope(newMsg);
+        const newLen = newMsg.payload?.length || 0;
+
+        return existingList.some((existing) => {
+          if (existing.direction !== newMsg.direction) return false;
+          if (existing.keyExpr !== newMsg.keyExpr) return false;
+          const exLen = existing.payload?.length || 0;
+          if (exLen !== newLen) return false;
+
+          const exScope = resolveScope(existing);
+          if (newScope && exScope && newScope !== exScope) return false;
+
+          // Check if payload content matches
+          const len = Math.min(newLen, 64);
+          for (let i = 0; i < len; i++) {
+            if (existing.payload[i] !== newMsg.payload[i]) return false;
+          }
+
+          // Exact timestamp or within 500ms jitter
+          return Math.abs(existing.timestamp - newMsg.timestamp) < 500;
+        });
+      };
 
       const uniqueMsgs: MessageItem[] = [];
       for (const msg of msgs) {
-        const sig = `${msg.sessionId || msg.profileId || ''}:${msg.keyExpr}:${msg.timestamp}:${msg.id || ''}:${msg.direction}`;
-        if (!seenSignatures.has(sig)) {
-          seenSignatures.add(sig);
+        if (!isDuplicate(msg, recentWindow) && !isDuplicate(msg, uniqueMsgs)) {
           uniqueMsgs.push(msg);
         }
       }

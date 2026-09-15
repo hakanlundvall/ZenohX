@@ -13,8 +13,11 @@
 // limitations under the License.
 
 use super::types::MdnsStatus;
-use super::utils::{collect_local_ip_addresses, display_hostname, sanitize_hostname};
-use mdns_sd::{ServiceDaemon, ServiceInfo};
+use super::utils::{
+    collect_local_ip_addresses, display_hostname, is_lan_ip, is_virtual_or_sub_interface,
+    sanitize_hostname,
+};
+use mdns_sd::{IfKind, IfPredicate, ServiceDaemon, ServiceInfo};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -136,6 +139,11 @@ impl MdnsManager {
             Some(d) => d.clone(),
             None => {
                 let d = ServiceDaemon::new().map_err(|e| format!("Failed to start mDNS daemon: {e}"))?;
+                let _ = d.disable_interface(IfKind::LoopbackV4);
+                let _ = d.disable_interface(IfKind::LoopbackV6);
+                let _ = d.disable_interface(IfKind::Predicate(IfPredicate::new(|intf| {
+                    is_virtual_or_sub_interface(&intf.name) || !is_lan_ip(&intf.ip())
+                })));
                 state.daemon = Some(d.clone());
                 d
             }

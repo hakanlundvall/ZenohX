@@ -261,11 +261,13 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-hidden p-2">
+            <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-2">
               <PayloadViewer
                 payload={selectedMessage.payload}
                 encoding={selectedMessage.encoding as EncodingType}
+                keyExpr={selectedMessage.key_expr}
                 maxHeight="100%"
+                className="flex-1 min-h-0"
               />
             </div>
           </div>

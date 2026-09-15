@@ -128,6 +128,7 @@ export const QuerierPanel: React.FC<QuerierPanelProps> = ({
 
   // Request Payload state
   const [requestEncoding, setRequestEncoding] = useState<EncodingType>('json');
+  const [requestProtoTypeName, setRequestProtoTypeName] = useState<string>('');
   const [requestPayloadText, setRequestPayloadText] = useState<string>(
     JSON.stringify({ query: 'status', verbose: true }, null, 2)
   );
@@ -197,6 +198,31 @@ export const QuerierPanel: React.FC<QuerierPanelProps> = ({
     [parsedParams, baseKeyExpr]
   );
 
+  // Payload Validation
+  const payloadValidation = useMemo(() => {
+    if (!includePayload || !requestPayloadText.trim()) {
+      return { isValid: true, bytes: [] as number[], error: undefined };
+    }
+    return encodePayload(requestPayloadText, requestEncoding, {
+      keyExpr: baseKeyExpr,
+      protoTypeName: requestEncoding === 'protobuf' ? requestProtoTypeName : undefined,
+    });
+  }, [includePayload, requestPayloadText, requestEncoding, baseKeyExpr, requestProtoTypeName]);
+
+  // Derived disabled states and tooltip explanations
+  const isSelectorEmpty = !selector.trim();
+  const isSessionMissing = !sessionId;
+  const isPayloadInvalid = includePayload && !payloadValidation.isValid;
+  const isQueryDisabled = isRunning || isSessionMissing || isSelectorEmpty || isPayloadInvalid;
+
+  const getRunQueryTooltip = (): string => {
+    if (isRunning) return 'Querying Zenoh network...';
+    if (isSessionMissing) return 'Cannot query: No active Zenoh session connected. Connect to a session first.';
+    if (isSelectorEmpty) return 'Cannot query: Selector expression cannot be empty.';
+    if (isPayloadInvalid) return `Cannot query: ${payloadValidation.error || 'Invalid request payload format'}`;
+    return 'Run query across Zenoh network';
+  };
+
   // Execute Query
   const handleRunQuery = useCallback(async () => {
     const now = Date.now();
@@ -210,18 +236,17 @@ export const QuerierPanel: React.FC<QuerierPanelProps> = ({
     }
 
     if (!sessionId) {
-      setErrorMessage('No active Zenoh session connected.');
+      setErrorMessage('Cannot query: No active Zenoh session connected.');
       return;
     }
 
     let payloadBytes: number[] | undefined = undefined;
     if (includePayload && requestPayloadText.trim()) {
-      const encResult = encodePayload(requestPayloadText, requestEncoding);
-      if (!encResult.isValid) {
-        setErrorMessage(encResult.error || 'Invalid request payload format');
+      if (!payloadValidation.isValid) {
+        setErrorMessage(`Cannot query: ${payloadValidation.error || 'Invalid request payload format'}`);
         return;
       }
-      payloadBytes = encResult.bytes;
+      payloadBytes = payloadValidation.bytes;
     }
 
     isRunningRef.current = true;
@@ -487,6 +512,9 @@ export const QuerierPanel: React.FC<QuerierPanelProps> = ({
                   onChange={setRequestPayloadText}
                   encoding={requestEncoding}
                   onEncodingChange={setRequestEncoding}
+                  keyExpr={baseKeyExpr}
+                  protoTypeName={requestProtoTypeName}
+                  onProtoTypeNameChange={setRequestProtoTypeName}
                   rows={5}
                 />
 
@@ -583,13 +611,24 @@ export const QuerierPanel: React.FC<QuerierPanelProps> = ({
         </div>
 
         {/* 5. Action Button: Run Query */}
-        <div className="pt-1">
+        <div className="pt-1 space-y-2">
+          {isSessionMissing && (
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs border bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 font-medium"
+              title="No active session connected. Select or connect a session to run queries."
+            >
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+              <span>No active Zenoh session connected. Connect to a session first.</span>
+            </div>
+          )}
+
           <Button
             type="button"
             onClick={handleRunQuery}
-            disabled={isRunning || !sessionId || !selector.trim()}
+            disabled={isQueryDisabled}
             className="w-full h-9 gap-2 font-medium"
             variant="default"
+            title={getRunQueryTooltip()}
           >
             {isRunning ? (
               <>

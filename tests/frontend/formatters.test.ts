@@ -710,6 +710,50 @@ describe('Protobuf integration in formatters', () => {
     assert.ok(snippet.includes('temp-400'));
     assert.ok(snippet.includes('22'));
   });
+
+  test('handles empty protobuf payloads gracefully across encoding, decoding, and snippets', () => {
+    useProtoStore.getState().clearAll();
+    const schemaRes = useProtoStore.getState().addSchema('sensor.proto', sensorProto);
+    assert.equal(schemaRes.success, true);
+
+    // 1. encodePayload with empty string "" produces valid 0-byte protobuf payload
+    const emptyStrEncoded = encodePayload('', 'protobuf', {
+      protoTypeName: 'iot.sensor.SensorData',
+    });
+    assert.equal(emptyStrEncoded.isValid, true);
+    assert.equal(emptyStrEncoded.bytes.length, 0);
+
+    // 2. encodePayload with "{}" produces valid 0-byte protobuf payload
+    const emptyObjEncoded = encodePayload('{}', 'protobuf', {
+      protoTypeName: 'iot.sensor.SensorData',
+    });
+    assert.equal(emptyObjEncoded.isValid, true);
+    assert.equal(emptyObjEncoded.bytes.length, 0);
+
+    // 3. tryFormatProtobuf on 0-byte buffer decodes into schema default values
+    const decodedEmpty = tryFormatProtobuf([], {
+      protoTypeName: 'iot.sensor.SensorData',
+    });
+    assert.equal(decodedEmpty.success, true);
+    assert.ok(decodedEmpty.data);
+    assert.equal((decodedEmpty.data as any).sensor_id, '');
+    assert.equal((decodedEmpty.data as any).temperature, 0);
+    assert.equal((decodedEmpty.data as any).active, false);
+
+    // 4. formatPayload on 0-byte buffer returns formatted string instead of blank
+    const formattedEmpty = formatPayload([], 'protobuf', 2, {
+      protoTypeName: 'iot.sensor.SensorData',
+    });
+    assert.ok(formattedEmpty.includes('"sensor_id": ""'));
+    assert.ok(formattedEmpty.includes('"temperature": 0'));
+
+    // 5. getPayloadSnippet on 0-byte buffer returns compact json snippet instead of "(empty payload)"
+    const snippetEmpty = getPayloadSnippet([], 'protobuf', 120, {
+      protoTypeName: 'iot.sensor.SensorData',
+    });
+    assert.notEqual(snippetEmpty, '(empty payload)');
+    assert.ok(snippetEmpty.includes('"sensor_id":""'));
+  });
 });
 
 

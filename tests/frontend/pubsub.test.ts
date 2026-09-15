@@ -257,7 +257,7 @@ describe('Pub/Sub Workspace Store Integration', () => {
     assert.equal(msgs[0].express, true);
   });
 
-  test('publish deduplicates self loopback samples so publish only creates 1 message item', async () => {
+  test('subscribed pattern receives published sample in realtime with direction incoming', async () => {
     let capturedHandler: ((event: { payload: unknown }) => void) | null = null;
     mockInvokeHandler = async (cmd) => {
       if (cmd === 'publish_sample_advanced' || cmd === 'publish_sample') {
@@ -280,6 +280,8 @@ describe('Pub/Sub Workspace Store Integration', () => {
       return mockInvokeHandler(cmd, args);
     };
 
+    useMessageStore.getState().cleanupListener();
+    useMessageStore.setState({ messages: [], subscriptions: [] });
     await useMessageStore.getState().initListener();
 
     // 1. Publish sample
@@ -294,7 +296,7 @@ describe('Pub/Sub Workspace Store Integration', () => {
     assert.equal(useMessageStore.getState().messages.length, 1);
     assert.equal(useMessageStore.getState().messages[0].direction, 'outgoing');
 
-    // 2. Simulate Zenoh delivering loopback sample to local subscriber
+    // 2. Simulate Zenoh delivering sample to local subscriber
     if (capturedHandler) {
       capturedHandler({
         payload: [
@@ -310,10 +312,12 @@ describe('Pub/Sub Workspace Store Integration', () => {
       });
     }
 
-    // 3. Verify messages count is STILL 1 (not duplicated as a second incoming message)
+    // 3. Verify messages count is 2 (1 outgoing from publish, 1 incoming from subscription in realtime)
     const msgsAfter = useMessageStore.getState().messages;
-    assert.equal(msgsAfter.length, 1);
+    assert.equal(msgsAfter.length, 2);
     assert.equal(msgsAfter[0].direction, 'outgoing');
+    assert.equal(msgsAfter[1].direction, 'incoming');
+    assert.equal(msgsAfter[1].keyExpr, 'demo/test/topic');
   });
 
   test('incoming samples from external publishers appear in realtime with and without source_id', async () => {
@@ -426,6 +430,23 @@ describe('Pub/Sub Workspace Store Integration', () => {
 
     assert.equal(useMessageStore.getState().messages.length, 2);
     assert.equal(useMessageStore.getState().subscriptions[0].count, 2);
+
+    // Duplicate batch with different generated IDs should be deduplicated
+    const duplicateBatch: MessageItem[] = [
+      {
+        id: 'b-3-different-id',
+        sessionId: 'sess-1',
+        subId: 'sub-1',
+        direction: 'incoming',
+        keyExpr: 'sensor/telemetry',
+        payload: [1],
+        encoding: 'json',
+        kind: 'put',
+        timestamp: 100,
+      },
+    ];
+    useMessageStore.getState().addMessagesBatch(duplicateBatch);
+    assert.equal(useMessageStore.getState().messages.length, 2, 'duplicate sample should be deduplicated');
   });
 
   test('togglePause and resumeLive freezes tailing and buffers incoming samples', () => {

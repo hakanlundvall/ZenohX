@@ -337,7 +337,9 @@ export const QueryablePanel: React.FC<QueryablePanelProps> = ({
     setIsSendingManualReply(true);
 
     try {
-      const encoded = encodePayload(manualReplyPayload, manualReplyEncoding);
+      const encoded = encodePayload(manualReplyPayload, manualReplyEncoding, {
+        keyExpr: targetQuery.key_expr,
+      });
       if (!encoded.isValid) {
         throw new Error(encoded.error || 'Invalid payload encoding syntax');
       }
@@ -588,6 +590,7 @@ export const QueryablePanel: React.FC<QueryablePanelProps> = ({
                       onChange={setReplyPayload}
                       encoding={replyEncoding}
                       onEncodingChange={setReplyEncoding}
+                      keyExpr={keyExpr}
                       rows={4}
                     />
                   </div>
@@ -1111,6 +1114,7 @@ export const QueryablePanel: React.FC<QueryablePanelProps> = ({
                           onChange={setManualReplyPayload}
                           encoding={manualReplyEncoding}
                           onEncodingChange={setManualReplyEncoding}
+                          keyExpr={activeReplyQuery?.key_expr}
                           rows={4}
                         />
 
@@ -1287,6 +1291,7 @@ export const QueryablePanel: React.FC<QueryablePanelProps> = ({
                       onChange={setEditReplyPayload}
                       encoding={editReplyEncoding}
                       onEncodingChange={setEditReplyEncoding}
+                      keyExpr={editKeyExpr}
                       rows={4}
                     />
                   </div>

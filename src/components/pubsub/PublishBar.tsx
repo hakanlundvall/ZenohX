@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Send,
   Trash2,
@@ -35,6 +35,7 @@ import { useResizable } from '../../hooks/useResizable';
 import { PayloadEditor } from '../viewer/PayloadEditor';
 import { useMessageStore } from '../../stores/messageStore';
 import { useConnectionStore } from '../../stores/connectionStore';
+import { useProtoStore } from '../../stores/protoStore';
 import {
   encodePayload,
   loadRecentKeys,
@@ -78,6 +79,7 @@ export const PublishBar: React.FC<PublishBarProps> = ({
   const [keyExpr, setKeyExpr] = useState<string>(defaultKeyExpr);
   const [kind, setKind] = useState<PutKind>('put');
   const [encoding, setEncoding] = useState<EncodingType>('json');
+  const [protoTypeName, setProtoTypeName] = useState<string>('');
   const [payloadText, setPayloadText] = useState<string>(
     JSON.stringify(
       {
@@ -139,13 +141,49 @@ export const PublishBar: React.FC<PublishBarProps> = ({
   const [showSuggestions, setShowSuggestions] = useState<boolean>(false);
   const [recentKeys, setRecentKeys] = useState<string[]>(() => loadRecentKeys());
 
+  // Auto-sync protoTypeName if encoding is protobuf and no type is selected yet
+  useEffect(() => {
+    if (encoding === 'protobuf' && !protoTypeName) {
+      const trimmedKey = keyExpr.trim();
+      if (trimmedKey) {
+        const mapping = useProtoStore.getState().findMappingForKey(trimmedKey);
+        if (mapping) {
+          setProtoTypeName(mapping.messageTypeName);
+          return;
+        }
+      }
+      const allTypes = useProtoStore.getState().getAllMessageTypes();
+      if (allTypes.length > 0) {
+        setProtoTypeName(allTypes[0].typeName);
+      }
+    }
+  }, [encoding, protoTypeName, keyExpr]);
+
   // Validation
   const validation = useMemo(() => {
     if (kind === 'delete') {
       return { isValid: true, bytes: [], error: undefined };
     }
-    return encodePayload(payloadText, encoding);
-  }, [payloadText, encoding, kind]);
+    const textToValidate = encoding === 'protobuf' && !payloadText.trim() ? '{}' : payloadText;
+    return encodePayload(textToValidate, encoding, {
+      keyExpr: keyExpr.trim(),
+      protoTypeName: encoding === 'protobuf' ? protoTypeName : undefined,
+    });
+  }, [payloadText, encoding, kind, keyExpr, protoTypeName]);
+
+  // Derived disabled states and tooltip explanations
+  const isKeyEmpty = !keyExpr.trim();
+  const isSessionMissing = !activeSessionId;
+  const isPayloadInvalid = kind === 'put' && !validation.isValid;
+  const isPublishDisabled = isSending || isSessionMissing || isKeyEmpty || isPayloadInvalid;
+
+  const getPublishTooltip = (): string => {
+    if (isSending) return 'Publishing sample...';
+    if (isSessionMissing) return 'Cannot publish: No active Zenoh session connected. Connect to a session first.';
+    if (isKeyEmpty) return 'Cannot publish: Key expression cannot be empty.';
+    if (isPayloadInvalid) return `Cannot publish: ${validation.error || 'Invalid payload format'}`;
+    return 'Publish sample (Ctrl+Enter)';
+  };
 
   // Publish handler
   const handlePublish = useCallback(async () => {
@@ -193,7 +231,10 @@ export const PublishBar: React.FC<PublishBarProps> = ({
         encoding,
         kind,
         propProfileId || selectedProfileId || undefined,
-        { qos: Object.keys(qosOptions).length > 0 ? qosOptions : undefined }
+        {
+          protoTypeName: encoding === 'protobuf' ? protoTypeName : undefined,
+          qos: Object.keys(qosOptions).length > 0 ? qosOptions : undefined,
+        }
       );
 
       // Update recent keys (max 5)
@@ -221,6 +262,7 @@ export const PublishBar: React.FC<PublishBarProps> = ({
     validation,
     publish,
     encoding,
+    protoTypeName,
     propProfileId,
     selectedProfileId,
     priority,
@@ -426,19 +468,30 @@ export const PublishBar: React.FC<PublishBarProps> = ({
             </span>
           </Button>
 
+          {/* Disconnected Session Notice */}
+          {isSessionMissing && (
+            <div
+              className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded text-[11px] border bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 font-medium"
+              title="No active session connected. Select or connect a session to publish."
+            >
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+              <span>Session Disconnected</span>
+            </div>
+          )}
+
           {/* Send Sample Button */}
           <Button
             type="button"
             variant={isSuccess ? 'outline' : kind === 'delete' ? 'destructive' : 'default'}
             size="sm"
             onClick={handlePublish}
-            disabled={isSending || !activeSessionId || (kind === 'put' && !validation.isValid)}
+            disabled={isPublishDisabled}
             className={`h-8 px-3 text-xs gap-1.5 font-medium transition-all duration-200 ${
               isSuccess
                 ? 'bg-emerald-600 hover:bg-emerald-600 text-white border-emerald-600 shadow-xs'
                 : ''
             }`}
-            title="Publish sample (Ctrl+Enter)"
+            title={getPublishTooltip()}
           >
             {isSending ? (
               <>
@@ -667,6 +720,9 @@ export const PublishBar: React.FC<PublishBarProps> = ({
               onChange={setPayloadText}
               encoding={encoding}
               onEncodingChange={setEncoding}
+              protoTypeName={protoTypeName}
+              onProtoTypeNameChange={setProtoTypeName}
+              keyExpr={keyExpr}
               showTemplates={true}
               showEncodingSelector={true}
               style={{ height: `${editorHeight}px` }}
