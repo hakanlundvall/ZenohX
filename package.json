@@ -38,6 +38,7 @@
     "test:all": "npm run test:types && npm run test:unit && npm run test:rust",
     "clean": "rm -rf dist && cargo clean --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri",
+    "release": "bash scripts/release.sh",
     "release:new": "bash scripts/release.sh"
   },
   "dependencies": {

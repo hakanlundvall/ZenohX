@@ -114,9 +114,8 @@ ok "Working tree clean"
 CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
 if [[ "$CURRENT_BRANCH" != "main" && "$CURRENT_BRANCH" != "master" ]]; then
     warn "You are on branch '$CURRENT_BRANCH', not 'main'."
-    read -p "  Continue anyway? (y/N) " -n 1 -r
-    echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    read -r -p "  Continue anyway? (y/N) " REPLY
+    if [[ ! $REPLY =~ ^[Yy]([Ee][Ss])?$ ]]; then
         echo "Release aborted."
         exit 0
     fi
@@ -134,9 +133,8 @@ ok "Tag '$TAG_NAME' is available"
 # 5. User Confirmation
 # ------------------------------------------------------------------------------
 
-read -p "Proceed with releasing v${NEW_VERSION}? (y/N) " -n 1 -r
-echo ""
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+read -r -p "Proceed with releasing v${NEW_VERSION}? (y/N) " REPLY
+if [[ ! $REPLY =~ ^[Yy]([Ee][Ss])?$ ]]; then
     echo "Release aborted."
     exit 0
 fi
@@ -307,9 +305,8 @@ printf '%b--- Changelog Preview ---%b\n' "$DIM" "$NC"
 echo "$CHANGELOG_ENTRY"
 printf '%b--- End Preview ---%b\n\n' "$DIM" "$NC"
 
-read -p "Does the changelog look good? (y/N) " -n 1 -r
-echo ""
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+read -r -p "Does the changelog look good? (y/N) " REPLY
+if [[ ! $REPLY =~ ^[Yy]([Ee][Ss])?$ ]]; then
     echo ""
     warn "Release paused. You can edit CHANGELOG.md manually, then finish with:"
     echo "  git add package.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json CHANGELOG.md"
