@@ -217,6 +217,16 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Pre-build Universal zenohx-mcp binary (macOS)
+        if: matrix.name == 'macOS Universal'
+        run: |
+          cargo build --release --target aarch64-apple-darwin --bin zenohx-mcp --manifest-path src-tauri/Cargo.toml
+          cargo build --release --target x86_64-apple-darwin --bin zenohx-mcp --manifest-path src-tauri/Cargo.toml
+          mkdir -p src-tauri/target/universal-apple-darwin/release
+          lipo -create -output src-tauri/target/universal-apple-darwin/release/zenohx-mcp \
+            src-tauri/target/aarch64-apple-darwin/release/zenohx-mcp \
+            src-tauri/target/x86_64-apple-darwin/release/zenohx-mcp
+
       - name: Build Tauri Desktop App & Sign Release
         uses: tauri-apps/tauri-action@v0
         env:

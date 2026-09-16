@@ -1361,7 +1361,11 @@ mod tests {
     async fn test_dispatch_mcp_tool_headless_fallback() {
         let _lock = TEST_DISPATCH_MUTEX.lock().await;
         let prev_sock = std::env::var("ZENOHX_IPC_SOCKET").ok();
-        let non_existent = std::env::temp_dir().join(format!("zenohx-nonexistent-{}.sock", Uuid::new_v4()));
+        let id = Uuid::new_v4().simple().to_string();
+        #[cfg(unix)]
+        let non_existent = PathBuf::from(format!("/tmp/zx-none-{}.sock", &id[..8]));
+        #[cfg(not(unix))]
+        let non_existent = std::env::temp_dir().join(format!("zenohx-nonexistent-{}.sock", &id[..8]));
         std::env::set_var("ZENOHX_IPC_SOCKET", &non_existent);
 
         // Since no IPC server is running on the specified socket,
@@ -1528,9 +1532,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_dispatch_mcp_tool_live_gui_mode() {
         let _lock = TEST_DISPATCH_MUTEX.lock().await;
-        let temp_dir = std::env::temp_dir().join(format!("zenohx-mcp-test-{}", Uuid::new_v4()));
-        let _ = std::fs::create_dir_all(&temp_dir);
-        let socket_path = temp_dir.join("zenohx.sock");
+        let id = Uuid::new_v4().simple().to_string();
+        let socket_path = PathBuf::from(format!("/tmp/zx-mcp-{}.sock", &id[..8]));
+        let _ = std::fs::remove_file(&socket_path);
 
         let listener = crate::ipc::server::bind_unix_listener(&socket_path).expect("bind listener");
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -1570,6 +1574,5 @@ mod tests {
         let _ = shutdown_tx.send(());
         let _ = server_task.await;
         let _ = std::fs::remove_file(&socket_path);
-        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

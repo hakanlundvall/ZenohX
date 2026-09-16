@@ -297,8 +297,8 @@ mod tests {
     async fn test_bind_unix_listener_0600_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp_dir = std::env::temp_dir();
-        let socket_path = temp_dir.join(format!("zenohx-test-perm-{}.sock", uuid::Uuid::new_v4()));
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let socket_path = std::path::PathBuf::from(format!("/tmp/zx-p-{}.sock", &id[..8]));
 
         let _listener = bind_unix_listener(&socket_path).expect("bind socket");
         assert!(socket_path.exists());
@@ -319,8 +319,8 @@ mod tests {
     async fn test_server_client_roundtrip() {
         use crate::ipc::IpcClient;
 
-        let temp_dir = std::env::temp_dir();
-        let socket_path = temp_dir.join(format!("zenohx-test-rt-{}.sock", uuid::Uuid::new_v4()));
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let socket_path = std::path::PathBuf::from(format!("/tmp/zx-rt-{}.sock", &id[..8]));
 
         let listener = bind_unix_listener(&socket_path).expect("bind listener");
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();

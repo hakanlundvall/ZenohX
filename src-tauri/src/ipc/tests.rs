@@ -107,7 +107,8 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn test_ipc_client_call_mock_server() {
-        let socket_path = std::env::temp_dir().join(format!("zenohx_test_{}.sock", uuid::Uuid::new_v4()));
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let socket_path = std::path::PathBuf::from(format!("/tmp/zx-call-{}.sock", &id[..8]));
         let _ = std::fs::remove_file(&socket_path);
 
         let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind socket");
