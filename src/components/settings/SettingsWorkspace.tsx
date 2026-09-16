@@ -20,12 +20,14 @@ import {
   Keyboard,
   FileCode2,
   Radio,
+  Bot,
 } from 'lucide-react';
 import { clearMessageHistory, queryMessages } from '../../lib/tauri';
 import type { StoredMessage } from '../../types/zenoh';
 
 import { PreferencesTab } from './tabs/PreferencesTab';
 import { NetworkTab } from './tabs/NetworkTab';
+import { AgentsTab } from './tabs/AgentsTab';
 import { UpdatesTab } from './tabs/UpdatesTab';
 import { HistoryTab } from './tabs/HistoryTab';
 import { ShortcutsTab } from './tabs/ShortcutsTab';
@@ -35,7 +37,7 @@ export interface SettingsWorkspaceProps {
   className?: string;
 }
 
-type TabType = 'preferences' | 'network' | 'protobuf' | 'updates' | 'history' | 'shortcuts';
+type TabType = 'preferences' | 'network' | 'agents' | 'protobuf' | 'updates' | 'history' | 'shortcuts';
 
 export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({ className = '' }) => {
   const [activeTab, setActiveTab] = useState<TabType>('preferences');
@@ -136,6 +138,18 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({ className 
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab('agents')}
+            className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-xs font-medium transition-colors ${
+              activeTab === 'agents'
+                ? 'bg-background text-foreground shadow-xs'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Bot className="w-3.5 h-3.5" />
+            <span>AI & Agents</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab('protobuf')}
             className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-xs font-medium transition-colors ${
               activeTab === 'protobuf'
@@ -190,6 +204,8 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({ className 
         {activeTab === 'preferences' && <PreferencesTab />}
 
         {activeTab === 'network' && <NetworkTab />}
+
+        {activeTab === 'agents' && <AgentsTab />}
 
         {activeTab === 'protobuf' && <ProtobufTab />}
 
