@@ -236,6 +236,42 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
             }
         }),
         json!({
+            "name": "zenoh_edit_profile",
+            "description": "Edits an existing connection profile (node) in ZenohX. You can update its name, connect locators, listen locators, or multicast scouting. NOTE: The Zenoh operation mode (peer/client/router) CANNOT be changed.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "profile_id": {
+                        "type": "string",
+                        "description": "ID of the profile to edit"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "New display name for the profile"
+                    },
+                    "connect_locators": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "New list of connect locators (e.g. ['tcp/192.168.1.50:7447'])"
+                    },
+                    "listen_locators": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "New list of listen locators (e.g. ['tcp/0.0.0.0:7447'])"
+                    },
+                    "scout_multicast": {
+                        "type": "boolean",
+                        "description": "Enable or disable multicast scouting"
+                    },
+                    "restart_session": {
+                        "type": "boolean",
+                        "description": "If true and the profile currently has an active running session, disconnect and restart the session with the updated profile configuration"
+                    }
+                },
+                "required": ["profile_id"]
+            }
+        }),
+        json!({
             "name": "zenoh_publish",
             "description": "Publishes a data sample to the specified Zenoh key expression. Specify 'session_id' to publish through an existing running node session (from zenoh_get_sessions).",
             "inputSchema": {
@@ -360,7 +396,7 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
         }),
         json!({
             "name": "zenoh_declare_queryable",
-            "description": "Registers a queryable endpoint that automatically returns a predefined response.",
+            "description": "Registers a queryable endpoint that automatically returns a predefined response or executes dynamic JavaScript script responses.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -370,7 +406,11 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
                     },
                     "reply_payload": {
                         "type": "string",
-                        "description": "Payload string returned in replies"
+                        "description": "Static payload string returned in replies (optional if script_code is provided)"
+                    },
+                    "script_code": {
+                        "type": "string",
+                        "description": "JavaScript code to dynamically compute query replies. Receives 'query' with { keyExpr, params, payload, timestamp }. Return a JSON object/string or explicit { payload, encoding, keyExpr }."
                     },
                     "encoding": {
                         "type": "string",
@@ -382,7 +422,7 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
                         "description": "Optional session UUID to register on"
                     }
                 },
-                "required": ["key_expr", "reply_payload"]
+                "required": ["key_expr"]
             }
         }),
         json!({
@@ -626,6 +666,163 @@ pub async fn execute_tool_on_state_with_mode(
             }
         }
 
+        "zenoh_edit_profile" => {
+            // Strict enforcement: mode cannot be changed
+            if args.get("mode").is_some() {
+                return IpcResponse::err(
+                    mode,
+                    "Changing the Zenoh operation mode (peer/client/router) of an existing profile is not allowed. Mode is immutable.",
+                );
+            }
+
+            let profile_id = match args.get("profile_id").and_then(|v| v.as_str()) {
+                Some(id) if !id.trim().is_empty() => id.trim(),
+                _ => return IpcResponse::err(mode, "Parameter 'profile_id' is required"),
+            };
+
+            let mut profile = match state.db.get_profile_by_id(profile_id) {
+                Ok(Some(p)) => p,
+                Ok(None) => {
+                    return IpcResponse::err(
+                        mode,
+                        format!("Profile '{}' not found in database", profile_id),
+                    )
+                }
+                Err(e) => {
+                    return IpcResponse::err(
+                        mode,
+                        format!("Database error fetching profile: {}", e),
+                    )
+                }
+            };
+
+            if let Some(name) = args.get("name").and_then(|v| v.as_str()) {
+                if name.trim().is_empty() {
+                    return IpcResponse::err(mode, "Profile name cannot be empty");
+                }
+                profile.name = name.trim().to_string();
+            }
+
+            if let Some(connect_locs) = args.get("connect_locators") {
+                match serde_json::from_value::<Vec<String>>(connect_locs.clone()) {
+                    Ok(locs) => {
+                        if let Some(serde_json::Value::Object(ref mut custom_map)) = profile.custom_config {
+                            if let Some(serde_json::Value::Object(ref mut conn_map)) = custom_map.get_mut("connect") {
+                                conn_map.insert("endpoints".to_string(), serde_json::json!(locs));
+                            }
+                        }
+                        profile.connect_locators = locs;
+                    }
+                    Err(e) => return IpcResponse::err(mode, format!("Invalid connect_locators array: {}", e)),
+                }
+            }
+
+            if let Some(listen_locs) = args.get("listen_locators") {
+                match serde_json::from_value::<Vec<String>>(listen_locs.clone()) {
+                    Ok(locs) => {
+                        if let Some(serde_json::Value::Object(ref mut custom_map)) = profile.custom_config {
+                            if let Some(serde_json::Value::Object(ref mut listen_map)) = custom_map.get_mut("listen") {
+                                listen_map.insert("endpoints".to_string(), serde_json::json!(locs));
+                            }
+                        }
+                        profile.listen_locators = locs;
+                    }
+                    Err(e) => return IpcResponse::err(mode, format!("Invalid listen_locators array: {}", e)),
+                }
+            }
+
+            if let Some(scout) = args.get("scout_multicast").and_then(|v| v.as_bool()) {
+                profile.scout_multicast = scout;
+            }
+
+            if let Err(e) = profile.validate() {
+                return IpcResponse::err(mode, format!("Validation error for profile: {}", e));
+            }
+
+            profile.updated_at = chrono::Utc::now().timestamp_millis();
+
+            if let Err(e) = state.db.save_profile(&profile) {
+                return IpcResponse::err(mode, format!("Failed to save updated profile: {}", e));
+            }
+
+            let restart_session = args
+                .get("restart_session")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let mut session_restarted = false;
+            let mut new_session_id = None;
+
+            if restart_session {
+                let sessions = state.session_manager.get_all_sessions().await;
+                if let Some(active) = sessions
+                    .into_iter()
+                    .find(|s| s.profile_id.as_deref() == Some(&profile.id))
+                {
+                    let _ = state.session_manager.disconnect(&active.id).await;
+
+                    let user_auth = profile
+                        .user_auth
+                        .as_ref()
+                        .and_then(|v| serde_json::from_value(v.clone()).ok());
+                    let tls_config = profile
+                        .tls_config
+                        .as_ref()
+                        .and_then(|v| serde_json::from_value(v.clone()).ok());
+                    let config = crate::zenoh::types::SessionConfig {
+                        profile_id: Some(profile.id.clone()),
+                        mode: profile.mode.clone(),
+                        connect_locators: profile.connect_locators.clone(),
+                        listen_locators: profile.listen_locators.clone(),
+                        scout_multicast: profile.scout_multicast,
+                        scout_gossip: true,
+                        reconnect_retry: None,
+                        user_auth,
+                        tls_config,
+                        custom_config: profile.custom_config.clone(),
+                    };
+                    match state.session_manager.connect(config).await {
+                        Ok(sid) => {
+                            session_restarted = true;
+                            new_session_id = Some(sid.to_string());
+                        }
+                        Err(e) => {
+                            return IpcResponse::err(
+                                mode,
+                                format!("Profile saved, but failed to restart session: {}", e),
+                            );
+                        }
+                    }
+                }
+            }
+
+            if let Some(app) = app_handle {
+                let _ = app.emit(
+                    "zenohx://mcp-action",
+                    json!({
+                        "action": "Edit Profile",
+                        "details": format!("Updated profile '{}'", profile.name)
+                    }),
+                );
+                let _ = app.emit(
+                    "zenohx://profile-updated",
+                    json!({
+                        "profile": profile,
+                        "session_restarted": session_restarted,
+                        "session_id": new_session_id
+                    }),
+                );
+            }
+
+            IpcResponse::ok(
+                mode,
+                json!({
+                    "profile": profile,
+                    "session_restarted": session_restarted,
+                    "session_id": new_session_id
+                }),
+            )
+        }
+
         "zenoh_publish" => {
             let key_expr = match args.get("key_expr").and_then(|v| v.as_str()) {
                 Some(k) if !k.trim().is_empty() => k.trim().to_string(),
@@ -737,8 +934,8 @@ pub async fn execute_tool_on_state_with_mode(
                 .get_session_profile_id(&sid)
                 .await
                 .unwrap_or_default();
+            let closure_profile_id = profile_id.clone();
             let app_opt = app_handle.cloned();
-
             match state
                 .session_manager
                 .subscribe_with_options(
@@ -749,7 +946,7 @@ pub async fn execute_tool_on_state_with_mode(
                     move |sample| {
                         let stored = crate::db::models::StoredMessage {
                             id: None,
-                            profile_id: profile_id.clone(),
+                            profile_id: closure_profile_id.clone(),
                             direction: "incoming".to_string(),
                             key_expr: sample.key_expr.clone(),
                             payload: sample.payload.clone(),
@@ -766,14 +963,50 @@ pub async fn execute_tool_on_state_with_mode(
                 )
                 .await
             {
-                Ok(_) => IpcResponse::ok(
-                    mode,
-                    json!({
-                        "subscription_id": sub_id.to_string(),
-                        "key_expr": key_expr,
-                        "session_id": sid.to_string(),
-                    }),
-                ),
+                Ok(_) => {
+                    // Persist subscription preset to SQLite DB if associated with a profile
+                    if !profile_id.is_empty() {
+                        let preset = crate::db::models::SubscriptionPreset {
+                            id: sub_id.to_string(),
+                            profile_id: profile_id.clone(),
+                            key_expr: key_expr.clone(),
+                            default_encoding: "json".to_string(),
+                            auto_subscribe: true,
+                            color_tag: None,
+                        };
+                        let _ = state.db.save_preset(&preset);
+                    }
+
+                    if let Some(app) = app_handle {
+                        let _ = app.emit(
+                            "zenohx://mcp-action",
+                            json!({
+                                "action": "Subscribe",
+                                "details": format!("Subscribed to '{}'", key_expr)
+                            }),
+                        );
+                        let _ = app.emit(
+                            "zenohx://subscription-added",
+                            json!({
+                                "id": sub_id.to_string(),
+                                "session_id": sid.to_string(),
+                                "profile_id": profile_id,
+                                "key_expr": key_expr,
+                                "encoding": "json",
+                                "active": true
+                            }),
+                        );
+                    }
+
+                    IpcResponse::ok(
+                        mode,
+                        json!({
+                            "subscription_id": sub_id.to_string(),
+                            "key_expr": key_expr,
+                            "session_id": sid.to_string(),
+                        }),
+                    )
+                }
                 Err(e) => IpcResponse::err(mode, format!("Failed to subscribe: {}", e)),
             }
         }
@@ -789,17 +1022,37 @@ pub async fn execute_tool_on_state_with_mode(
                 .and_then(|s| Uuid::parse_str(s).ok());
 
             if let Some(sub_id) = sub_id_opt {
-                if let Some(sid) = sid_opt {
-                    match state.session_manager.unsubscribe(&sid, sub_id).await {
-                        Ok(_) => IpcResponse::ok(mode, json!({ "unsubscribed": sub_id.to_string() })),
-                        Err(e) => IpcResponse::err(mode, format!("Failed to unsubscribe: {}", e)),
-                    }
+                let res = if let Some(sid) = sid_opt {
+                    state.session_manager.unsubscribe(&sid, sub_id).await
                 } else {
                     let sessions = state.session_manager.get_all_sessions().await;
                     for s in sessions {
                         let _ = state.session_manager.unsubscribe(&s.id, sub_id).await;
                     }
-                    IpcResponse::ok(mode, json!({ "unsubscribed": sub_id.to_string() }))
+                    Ok(())
+                };
+
+                match res {
+                    Ok(_) => {
+                        let _ = state.db.delete_preset(&sub_id.to_string());
+                        if let Some(app) = app_handle {
+                            let _ = app.emit(
+                                "zenohx://mcp-action",
+                                json!({
+                                    "action": "Unsubscribe",
+                                    "details": format!("Unsubscribed '{}'", sub_id)
+                                }),
+                            );
+                            let _ = app.emit(
+                                "zenohx://subscription-removed",
+                                json!({
+                                    "id": sub_id.to_string(),
+                                }),
+                            );
+                        }
+                        IpcResponse::ok(mode, json!({ "unsubscribed": sub_id.to_string() }))
+                    }
+                    Err(e) => IpcResponse::err(mode, format!("Failed to unsubscribe: {}", e)),
                 }
             } else {
                 IpcResponse::err(mode, "Parameter 'subscription_id' is required")
@@ -912,10 +1165,13 @@ pub async fn execute_tool_on_state_with_mode(
                 Some(k) if !k.trim().is_empty() => k.trim().to_string(),
                 _ => return IpcResponse::err(mode, "Parameter 'key_expr' is required"),
             };
-            let reply_payload = match args.get("reply_payload").and_then(|v| v.as_str()) {
-                Some(p) => p.to_string(),
-                None => return IpcResponse::err(mode, "Parameter 'reply_payload' is required"),
-            };
+            let reply_payload = args.get("reply_payload").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let script_code = args.get("script_code").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+            if reply_payload.is_none() && script_code.is_none() {
+                return IpcResponse::err(mode, "Parameter 'reply_payload' (static reply) or 'script_code' (JavaScript handler) is required");
+            }
+
             let encoding = args
                 .get("encoding")
                 .and_then(|v| v.as_str())
@@ -927,36 +1183,176 @@ pub async fn execute_tool_on_state_with_mode(
             };
 
             let queryable_id = Uuid::new_v4();
-            let reply_bytes = reply_payload.as_bytes().to_vec();
-            let reply_enc = encoding.clone();
-            let reply_key = key_expr.clone();
-
-            match state
+            let profile_id = state
                 .session_manager
-                .declare_queryable(
-                    &sid,
-                    queryable_id,
-                    &key_expr,
-                    move |qh| {
-                        let bytes = reply_bytes.clone();
-                        let enc = reply_enc.clone();
-                        let key = reply_key.clone();
-                        async move {
-                            let _ = qh.reply_with_encoding(&key, bytes, &enc).await;
-                        }
-                    },
-                )
+                .get_session_profile_id(&sid)
                 .await
-            {
-                Ok(_) => IpcResponse::ok(
-                    mode,
-                    json!({
-                        "queryable_id": queryable_id.to_string(),
-                        "key_expr": key_expr,
-                        "session_id": sid.to_string(),
-                    }),
-                ),
-                Err(e) => IpcResponse::err(mode, format!("Failed to declare queryable: {}", e)),
+                .unwrap_or_default();
+
+            if let Some(ref script) = script_code {
+                if !profile_id.is_empty() {
+                    let preset = crate::db::models::QueryablePreset {
+                        id: queryable_id.to_string(),
+                        profile_id: profile_id.clone(),
+                        key_expr: key_expr.clone(),
+                        auto_reply: true,
+                        reply_payload: Some(script.clone()),
+                        reply_encoding: "script".to_string(),
+                    };
+                    let _ = state.db.save_queryable_preset(&preset);
+                }
+
+                if let Some(app) = app_handle {
+                    let app_clone = app.clone();
+                    let reg_res = state
+                        .session_manager
+                        .declare_queryable_routed(&sid, queryable_id, &key_expr, move |inbound| {
+                            let _ = app_clone.emit("zenohx://query", inbound);
+                        })
+                        .await;
+
+                    match reg_res {
+                        Ok(_) => {
+                            let _ = app.emit(
+                                "zenohx://mcp-action",
+                                json!({
+                                    "action": "Declare Queryable (JS Script)",
+                                    "details": format!("Declared JS queryable on '{}'", key_expr)
+                                }),
+                            );
+                            let _ = app.emit(
+                                "zenohx://queryable-added",
+                                json!({
+                                    "id": queryable_id.to_string(),
+                                    "session_id": sid.to_string(),
+                                    "profile_id": profile_id,
+                                    "key_expr": key_expr,
+                                    "auto_reply": true,
+                                    "reply_mode": "script",
+                                    "script_code": script,
+                                    "reply_encoding": encoding,
+                                }),
+                            );
+
+                            IpcResponse::ok(
+                                mode,
+                                json!({
+                                    "queryable_id": queryable_id.to_string(),
+                                    "key_expr": key_expr,
+                                    "reply_mode": "script",
+                                    "session_id": sid.to_string(),
+                                }),
+                            )
+                        }
+                        Err(e) => IpcResponse::err(mode, format!("Failed to declare queryable: {}", e)),
+                    }
+                } else {
+                    // Headless fallback
+                    let fallback_payload = reply_payload
+                        .as_deref()
+                        .unwrap_or("{\"status\":\"ok\"}")
+                        .to_string();
+                    let reply_bytes = fallback_payload.into_bytes();
+                    let reply_enc = if reply_payload.is_some() { encoding.clone() } else { "application/json".to_string() };
+                    let reply_key = key_expr.clone();
+                    match state
+                        .session_manager
+                        .declare_queryable(
+                            &sid,
+                            queryable_id,
+                            &key_expr,
+                            move |qh| {
+                                let bytes = reply_bytes.clone();
+                                let enc = reply_enc.clone();
+                                let key = reply_key.clone();
+                                async move {
+                                    let _ = qh.reply_with_encoding(&key, bytes, &enc).await;
+                                }
+                            },
+                        )
+                        .await
+                    {
+                        Ok(_) => IpcResponse::ok(
+                            mode,
+                            json!({
+                                "queryable_id": queryable_id.to_string(),
+                                "key_expr": key_expr,
+                                "reply_mode": "script",
+                                "session_id": sid.to_string(),
+                            }),
+                        ),
+                        Err(e) => IpcResponse::err(mode, format!("Failed to declare queryable: {}", e)),
+                    }
+                }
+            } else {
+                let static_payload = reply_payload.unwrap();
+                let reply_bytes = static_payload.as_bytes().to_vec();
+                let reply_enc = encoding.clone();
+                let reply_key = key_expr.clone();
+
+                if !profile_id.is_empty() {
+                    let preset = crate::db::models::QueryablePreset {
+                        id: queryable_id.to_string(),
+                        profile_id: profile_id.clone(),
+                        key_expr: key_expr.clone(),
+                        auto_reply: true,
+                        reply_payload: Some(static_payload.clone()),
+                        reply_encoding: encoding.clone(),
+                    };
+                    let _ = state.db.save_queryable_preset(&preset);
+                }
+
+                if let Some(app) = app_handle {
+                    let _ = app.emit(
+                        "zenohx://mcp-action",
+                        json!({
+                            "action": "Declare Queryable",
+                            "details": format!("Declared queryable on '{}'", key_expr)
+                        }),
+                    );
+                    let _ = app.emit(
+                        "zenohx://queryable-added",
+                        json!({
+                            "id": queryable_id.to_string(),
+                            "session_id": sid.to_string(),
+                            "profile_id": profile_id,
+                            "key_expr": key_expr,
+                            "auto_reply": true,
+                            "reply_mode": "payload",
+                            "reply_payload": static_payload,
+                            "reply_encoding": encoding,
+                        }),
+                    );
+                }
+
+                match state
+                    .session_manager
+                    .declare_queryable(
+                        &sid,
+                        queryable_id,
+                        &key_expr,
+                        move |qh| {
+                            let bytes = reply_bytes.clone();
+                            let enc = reply_enc.clone();
+                            let key = reply_key.clone();
+                            async move {
+                                let _ = qh.reply_with_encoding(&key, bytes, &enc).await;
+                            }
+                        },
+                    )
+                    .await
+                {
+                    Ok(_) => IpcResponse::ok(
+                        mode,
+                        json!({
+                            "queryable_id": queryable_id.to_string(),
+                            "key_expr": key_expr,
+                            "reply_mode": "payload",
+                            "session_id": sid.to_string(),
+                        }),
+                    ),
+                    Err(e) => IpcResponse::err(mode, format!("Failed to declare queryable: {}", e)),
+                }
             }
         }
 
@@ -1131,8 +1527,8 @@ mod tests {
         let tools = get_tool_definitions();
         assert_eq!(
             tools.len(),
-            14,
-            "Expected exactly 14 MCP tools, found {}",
+            15,
+            "Expected exactly 15 MCP tools, found {}",
             tools.len()
         );
         let expected_names = [
@@ -1141,6 +1537,7 @@ mod tests {
             "zenoh_disconnect_session",
             "zenoh_get_sessions",
             "zenoh_get_profiles",
+            "zenoh_edit_profile",
             "zenoh_publish",
             "zenoh_subscribe",
             "zenoh_unsubscribe",
@@ -1439,6 +1836,55 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_execute_tool_declare_queryable_script_mode() {
+        let state = create_test_state();
+
+        let profile = crate::db::models::ConnectionProfile {
+            id: "mcp-queryable-profile".to_string(),
+            name: "MCP Queryable Profile".to_string(),
+            mode: "peer".to_string(),
+            connect_locators: vec![],
+            listen_locators: vec![],
+            scout_multicast: true,
+            user_auth: None,
+            tls_config: None,
+            custom_config: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+        state.db.save_profile(&profile).expect("save profile");
+
+        let connect_resp = execute_tool_on_state(
+            "zenoh_connect_session",
+            json!({ "profile_id": "mcp-queryable-profile" }),
+            &state,
+            None,
+        ).await;
+        assert!(connect_resp.success);
+
+        // Declare with script_code
+        let q_resp = execute_tool_on_state(
+            "zenoh_declare_queryable",
+            json!({
+                "key_expr": "demo/test/script",
+                "script_code": "return { message: 'hello from script' };"
+            }),
+            &state,
+            None,
+        ).await;
+        assert!(q_resp.success);
+
+        // Verify queryable preset saved in DB
+        let presets = state.db.get_queryable_presets("mcp-queryable-profile").expect("get presets");
+        assert_eq!(presets.len(), 1);
+        assert_eq!(presets[0].key_expr, "demo/test/script");
+        assert_eq!(presets[0].reply_encoding, "script");
+        assert_eq!(presets[0].reply_payload.as_deref(), Some("return { message: 'hello from script' };"));
+
+        let _ = execute_tool_on_state("zenoh_disconnect_session", json!({}), &state, None).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_execute_tool_inspect_topology() {
         let state = create_test_state();
 
@@ -1502,6 +1948,65 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_execute_tool_subscribe_persists_preset_and_unsubscribe_removes() {
+        let state = create_test_state();
+
+        let profile = crate::db::models::ConnectionProfile {
+            id: "mcp-sub-profile".to_string(),
+            name: "MCP Sub Profile".to_string(),
+            mode: "peer".to_string(),
+            connect_locators: vec![],
+            listen_locators: vec![],
+            scout_multicast: true,
+            user_auth: None,
+            tls_config: None,
+            custom_config: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+        state.db.save_profile(&profile).expect("save profile");
+
+        let connect_resp = execute_tool_on_state(
+            "zenoh_connect_session",
+            json!({ "profile_id": "mcp-sub-profile" }),
+            &state,
+            None,
+        ).await;
+        assert!(connect_resp.success);
+
+        // Subscribe to a topic
+        let sub_resp = execute_tool_on_state(
+            "zenoh_subscribe",
+            json!({ "key_expr": "test/mcp/preset" }),
+            &state,
+            None,
+        ).await;
+        assert!(sub_resp.success);
+        let sub_id = sub_resp.data["subscription_id"].as_str().unwrap();
+
+        // Check preset in DB
+        let presets = state.db.get_presets("mcp-sub-profile").expect("get presets");
+        assert_eq!(presets.len(), 1);
+        assert_eq!(presets[0].id, sub_id);
+        assert_eq!(presets[0].key_expr, "test/mcp/preset");
+
+        // Unsubscribe
+        let unsub_resp = execute_tool_on_state(
+            "zenoh_unsubscribe",
+            json!({ "subscription_id": sub_id }),
+            &state,
+            None,
+        ).await;
+        assert!(unsub_resp.success);
+
+        // Check preset removed from DB
+        let presets_after = state.db.get_presets("mcp-sub-profile").expect("get presets");
+        assert_eq!(presets_after.len(), 0);
+
+        let _ = execute_tool_on_state("zenoh_disconnect_session", json!({}), &state, None).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_execute_tool_get_profiles() {
         let state = create_test_state();
 
@@ -1526,6 +2031,165 @@ mod tests {
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0]["id"], "profile-123");
         assert_eq!(profiles[0]["name"], "Test Router Node");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_execute_tool_edit_profile_success() {
+        let state = create_test_state();
+
+        let profile = crate::db::models::ConnectionProfile {
+            id: "profile-edit-1".to_string(),
+            name: "Initial Node Name".to_string(),
+            mode: "peer".to_string(),
+            connect_locators: vec!["tcp/127.0.0.1:7447".to_string()],
+            listen_locators: vec![],
+            scout_multicast: true,
+            user_auth: None,
+            tls_config: None,
+            custom_config: None,
+            created_at: 100,
+            updated_at: 100,
+        };
+        state.db.save_profile(&profile).expect("save initial profile");
+
+        let resp = execute_tool_on_state(
+            "zenoh_edit_profile",
+            json!({
+                "profile_id": "profile-edit-1",
+                "name": "Updated Node Name",
+                "connect_locators": ["tcp/10.0.0.1:7447"],
+                "listen_locators": ["tcp/0.0.0.0:7447"],
+                "scout_multicast": false
+            }),
+            &state,
+            None,
+        ).await;
+
+        assert!(resp.success);
+        assert_eq!(resp.data["profile"]["name"], "Updated Node Name");
+        assert_eq!(resp.data["profile"]["mode"], "peer");
+        assert_eq!(resp.data["profile"]["connect_locators"], json!(["tcp/10.0.0.1:7447"]));
+        assert_eq!(resp.data["profile"]["listen_locators"], json!(["tcp/0.0.0.0:7447"]));
+        assert_eq!(resp.data["profile"]["scout_multicast"], false);
+
+        // Check database
+        let updated = state.db.get_profile_by_id("profile-edit-1").expect("db").expect("profile");
+        assert_eq!(updated.name, "Updated Node Name");
+        assert_eq!(updated.mode, "peer");
+        assert_eq!(updated.connect_locators, vec!["tcp/10.0.0.1:7447"]);
+        assert_eq!(updated.listen_locators, vec!["tcp/0.0.0.0:7447"]);
+        assert!(!updated.scout_multicast);
+        assert_eq!(updated.created_at, 100);
+        assert!(updated.updated_at > 100);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_execute_tool_edit_profile_rejects_mode_change() {
+        let state = create_test_state();
+
+        let profile = crate::db::models::ConnectionProfile {
+            id: "profile-edit-mode".to_string(),
+            name: "Mode Test Node".to_string(),
+            mode: "peer".to_string(),
+            connect_locators: vec![],
+            listen_locators: vec![],
+            scout_multicast: true,
+            user_auth: None,
+            tls_config: None,
+            custom_config: None,
+            created_at: 100,
+            updated_at: 100,
+        };
+        state.db.save_profile(&profile).expect("save initial profile");
+
+        let resp = execute_tool_on_state(
+            "zenoh_edit_profile",
+            json!({
+                "profile_id": "profile-edit-mode",
+                "mode": "router"
+            }),
+            &state,
+            None,
+        ).await;
+
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("mode"));
+
+        // Mode in DB remains unchanged
+        let unchanged = state.db.get_profile_by_id("profile-edit-mode").expect("db").expect("profile");
+        assert_eq!(unchanged.mode, "peer");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_execute_tool_edit_profile_not_found() {
+        let state = create_test_state();
+
+        let resp = execute_tool_on_state(
+            "zenoh_edit_profile",
+            json!({
+                "profile_id": "non-existent-profile",
+                "name": "New Name"
+            }),
+            &state,
+            None,
+        ).await;
+
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("not found"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_execute_tool_edit_profile_restart_session() {
+        let state = create_test_state();
+
+        let profile = crate::db::models::ConnectionProfile {
+            id: "profile-edit-restart".to_string(),
+            name: "Restart Node".to_string(),
+            mode: "peer".to_string(),
+            connect_locators: vec![],
+            listen_locators: vec![],
+            scout_multicast: true,
+            user_auth: None,
+            tls_config: None,
+            custom_config: None,
+            created_at: 100,
+            updated_at: 100,
+        };
+        state.db.save_profile(&profile).expect("save initial profile");
+
+        // Connect session for this profile
+        let conn_resp = execute_tool_on_state(
+            "zenoh_connect_session",
+            json!({ "profile_id": "profile-edit-restart" }),
+            &state,
+            None,
+        ).await;
+        assert!(conn_resp.success);
+        let old_session_id = conn_resp.data["id"].as_str().unwrap().to_string();
+
+        // Edit with restart_session: true
+        let edit_resp = execute_tool_on_state(
+            "zenoh_edit_profile",
+            json!({
+                "profile_id": "profile-edit-restart",
+                "name": "Restart Node Renamed",
+                "restart_session": true
+            }),
+            &state,
+            None,
+        ).await;
+
+        assert!(edit_resp.success);
+        assert_eq!(edit_resp.data["session_restarted"], true);
+        let new_session_id = edit_resp.data["session_id"].as_str().unwrap();
+        assert_ne!(new_session_id, old_session_id);
+
+        // Verify active sessions has new session ID
+        let sessions = state.session_manager.get_all_sessions().await;
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id.to_string(), new_session_id);
+
+        let _ = execute_tool_on_state("zenoh_disconnect_session", json!({}), &state, None).await;
     }
 
     #[cfg(unix)]

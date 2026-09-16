@@ -162,6 +162,9 @@ function renderHook<T, P>(hook: (props: P) => T, initialProps: P): HookHarness<T
 
 // Import useMcpListener
 import { useMcpListener, WorkspaceTab, McpActionPayload } from '../src/hooks/useMcpListener';
+import { useMessageStore } from '../src/stores/messageStore';
+import { useQueryStore } from '../src/stores/queryStore';
+import { useConnectionStore } from '../src/stores/connectionStore';
 
 describe('useMcpListener Hook', () => {
   beforeEach(() => {
@@ -315,5 +318,103 @@ describe('useMcpListener Hook', () => {
     // Listeners should be unlistened immediately upon promise completion
     assert.equal(listeners.get('zenohx://gui-switch-tab')?.length || 0, 0);
     assert.equal(listeners.get('zenohx://mcp-action')?.length || 0, 0);
+  });
+
+  test('registers and unregisters zenohx://subscription-added and removed listeners', async () => {
+    const harness = renderHook((cb) => useMcpListener(cb), () => {});
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(listeners.get('zenohx://subscription-added')?.length, 1);
+    assert.equal(listeners.get('zenohx://subscription-removed')?.length, 1);
+
+    harness.unmount();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(listeners.get('zenohx://subscription-added')?.length, 0);
+    assert.equal(listeners.get('zenohx://subscription-removed')?.length, 0);
+  });
+
+  test('adds subscription to useMessageStore on zenohx://subscription-added and removes on zenohx://subscription-removed', async () => {
+    const harness = renderHook((cb) => useMcpListener(cb), () => {});
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    emitTauriEvent('zenohx://subscription-added', {
+      id: 'sub-test-123',
+      session_id: 'session-456',
+      profile_id: 'profile-789',
+      key_expr: 'demo/mcp/added',
+      encoding: 'json',
+      active: true,
+    });
+
+    const currentSubs = useMessageStore.getState().subscriptions;
+    const addedSub = currentSubs.find((s) => s.id === 'sub-test-123');
+    assert.ok(addedSub, 'Subscription should be added to messageStore');
+    assert.equal(addedSub.keyExpr, 'demo/mcp/added');
+    assert.equal(addedSub.profileId, 'profile-789');
+
+    emitTauriEvent('zenohx://subscription-removed', { id: 'sub-test-123' });
+    const subsAfter = useMessageStore.getState().subscriptions;
+    assert.ok(!subsAfter.some((s) => s.id === 'sub-test-123'), 'Subscription should be removed from messageStore');
+
+    harness.unmount();
+  });
+
+  test('adds queryable to useQueryStore on zenohx://queryable-added', async () => {
+    const harness = renderHook((cb) => useMcpListener(cb), () => {});
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    emitTauriEvent('zenohx://queryable-added', {
+      id: 'queryable-test-456',
+      session_id: 'session-789',
+      profile_id: 'profile-abc',
+      key_expr: 'demo/mcp/script',
+      auto_reply: true,
+      reply_mode: 'script',
+      script_code: 'return { status: "ok" };',
+      reply_encoding: 'json',
+    });
+
+    const currentQueryables = useQueryStore.getState().activeQueryables;
+    const addedQueryable = currentQueryables.find((q) => q.id === 'queryable-test-456');
+    assert.ok(addedQueryable, 'Queryable should be added to queryStore');
+    assert.equal(addedQueryable.keyExpr, 'demo/mcp/script');
+    assert.equal(addedQueryable.replyMode, 'script');
+    assert.equal(addedQueryable.scriptCode, 'return { status: "ok" };');
+
+    harness.unmount();
+  });
+
+  test('reloads profiles on zenohx://profile-updated', async () => {
+    let loadProfilesCalled = false;
+    const origLoadProfiles = useConnectionStore.getState().loadProfiles;
+    useConnectionStore.setState({
+      loadProfiles: async () => {
+        loadProfilesCalled = true;
+      },
+    });
+
+    const harness = renderHook((cb) => useMcpListener(cb), () => {});
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    emitTauriEvent('zenohx://profile-updated', {
+      profile: {
+        id: 'profile-test-123',
+        name: 'Updated Node',
+        mode: 'peer',
+        connect_locators: [],
+        listen_locators: [],
+        scout_multicast: true,
+      },
+      session_restarted: false,
+    });
+
+    assert.equal(loadProfilesCalled, true, 'loadProfiles should be called on zenohx://profile-updated');
+
+    harness.unmount();
+    useConnectionStore.setState({ loadProfiles: origLoadProfiles });
   });
 });

@@ -134,6 +134,17 @@ export interface QueryState {
   ) => Promise<void>;
 
   dismissInboundQuery: (token: string) => void;
+  addExternalQueryable: (q: {
+    id: string;
+    sessionId: string;
+    profileId?: string;
+    keyExpr: string;
+    autoReply: boolean;
+    replyMode?: QueryableReplyMode;
+    replyPayload?: string;
+    scriptCode?: string;
+    replyEncoding?: string;
+  }) => void;
 
   loadQueryHistory: (profileId?: string, limit?: number, offset?: number) => Promise<void>;
   loadQueryables: (profileId: string, activeSessionId?: string) => Promise<void>;
@@ -544,6 +555,32 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       const friendly = formatFriendlyError(err, 'Undeclare Queryable').fullMessage;
       set({ error: friendly });
       throw new Error(friendly);
+    }
+  },
+
+  addExternalQueryable: (q) => {
+    set((state) => {
+      if (state.activeQueryables.some((item) => item.id === q.id)) {
+        return state;
+      }
+      const newQ: ActiveQueryable = {
+        id: q.id,
+        sessionId: q.sessionId,
+        profileId: q.profileId,
+        keyExpr: q.keyExpr,
+        autoReply: q.autoReply,
+        replyMode: q.replyMode || 'payload',
+        replyPayload: q.replyPayload,
+        scriptCode: q.scriptCode,
+        replyEncoding: (q.replyEncoding as EncodingType) || 'json',
+        createdAt: Date.now(),
+      };
+      return {
+        activeQueryables: [...state.activeQueryables, newQ],
+      };
+    });
+    if (!get().isListening) {
+      get().initListener().catch(() => {});
     }
   },
 

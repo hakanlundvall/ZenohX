@@ -126,6 +126,16 @@ export interface MessageState {
     activeSessionId?: string
   ) => Promise<void>;
   loadSubscriptions: (profileId: string, activeSessionId?: string) => Promise<void>;
+  addExternalSubscription: (sub: {
+    id: string;
+    sessionId?: string;
+    profileId?: string;
+    keyExpr: string;
+    encoding?: string;
+    colorTag?: string;
+    active?: boolean;
+  }) => void;
+  removeExternalSubscription: (subId: string) => void;
 
   publish: (
     sessionId: string,
@@ -464,6 +474,32 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       set({ error: friendly });
       throw new Error(friendly);
     }
+  },
+
+  addExternalSubscription: (sub) => {
+    const currentSubs = get().subscriptions;
+    if (currentSubs.some((s) => s.id === sub.id)) {
+      return;
+    }
+    const colorIndex = currentSubs.length % COLOR_PALETTE.length;
+    const newSub: SubscriptionItem = {
+      id: sub.id,
+      sessionId: sub.sessionId || '',
+      profileId: sub.profileId || '',
+      keyExpr: sub.keyExpr,
+      encoding: (sub.encoding as EncodingType) || 'json',
+      colorTag: sub.colorTag || COLOR_PALETTE[colorIndex],
+      count: 0,
+      active: sub.active ?? true,
+      createdAt: Date.now(),
+    };
+    set({ subscriptions: [...currentSubs, newSub] });
+  },
+
+  removeExternalSubscription: (subId: string) => {
+    set((state) => ({
+      subscriptions: state.subscriptions.filter((s) => s.id !== subId),
+    }));
   },
 
   toggleSubscription: async (sessionId: string, subId: string) => {
