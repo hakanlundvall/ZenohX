@@ -10,9 +10,34 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_INCREMENTAL: 0
+
 jobs:
-  test-and-build:
-    name: Test & Build (${{ matrix.platform }})
+  frontend:
+    name: Frontend Tests & Build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run frontend tests & typechecks
+        run: npm test
+
+      - name: Run frontend build check
+        run: npm run build
+
+  rust-tests:
+    name: Rust Tests (${{ matrix.platform }})
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -37,7 +62,7 @@ jobs:
         with:
           workspaces: 'src-tauri -> src-tauri/target'
 
-      - name: Install Linux system dependencies
+      - name: Install Linux system dependencies & mold linker
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -50,16 +75,12 @@ jobs:
             libssl-dev \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            mold \
+            clang
 
       - name: Install npm dependencies
         run: npm ci
-
-      - name: Run frontend tests
-        run: npm test
-
-      - name: Run frontend build check
-        run: npm run build
 
       - name: Configure Windows Test Environment
         if: matrix.platform == 'windows-latest'
@@ -69,5 +90,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path $debugDir
           echo "$debugDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Run Rust backend tests
+      - name: Run Rust backend tests (Linux with mold)
+        if: runner.os == 'Linux'
+        env:
+          RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Run Rust backend tests (macOS & Windows)
+        if: runner.os != 'Linux'
         run: cargo test --manifest-path src-tauri/Cargo.toml

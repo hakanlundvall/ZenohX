@@ -47,4 +47,14 @@ futures = "0.3"
 toml = "0.8"
 toml_edit = "0.22"
 
+# Optimized development and test profile for fast iteration
+[profile.dev]
+debug = 1 # Line tables only: cuts debug symbols by ~70% while preserving clean backtraces
+opt-level = 0
 
+# High-performance parallelized release profile
+[profile.release]
+opt-level = 3
+codegen-units = 16 # Parallelize LLVM codegen across CPU cores
+lto = "thin"       # Thin LTO links 3x faster than full fat LTO
+strip = true       # Automatically strip symbols for compact binaries
