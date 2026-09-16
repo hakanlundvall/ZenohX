@@ -43,4 +43,6 @@ parking_lot = "0.12"
 mdns-sd = "0.21.1"
 if-addrs = "0.13"
 futures = "0.3"
+toml = "0.8"
+
 

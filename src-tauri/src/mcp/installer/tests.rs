@@ -416,3 +416,20 @@ fn test_evaluate_agent_detected_when_app_dir_exists() {
     assert!(!target.installed);
     assert_eq!(target.config_path, home.join(".cursor").join("mcp.json"));
 }
+
+#[test]
+fn test_strip_json_comments_escaped_quotes() {
+    let raw = r#"{
+        "message": "hello \" // not a comment /* neither */ world",
+        // this is a comment
+        "other": "value"
+    }"#;
+    let stripped = registry::strip_json_comments(raw);
+    let val: serde_json::Value = serde_json::from_str(&stripped).expect("valid json");
+    assert_eq!(
+        val["message"],
+        "hello \" // not a comment /* neither */ world"
+    );
+    assert_eq!(val["other"], "value");
+}
+

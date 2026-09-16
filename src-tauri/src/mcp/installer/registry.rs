@@ -213,13 +213,23 @@ pub fn resolve_agent_paths(
 pub fn strip_json_comments(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_string = false;
+    let mut escaped = false;
     let mut chars = text.chars().peekable();
 
     while let Some(c) = chars.next() {
-        if c == '"' {
-            in_string = !in_string;
+        if in_string {
             out.push(c);
-        } else if !in_string && c == '/' && chars.peek() == Some(&'/') {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+        } else if c == '"' {
+            in_string = true;
+            out.push(c);
+        } else if c == '/' && chars.peek() == Some(&'/') {
             chars.next(); // skip second '/'
             for ch in chars.by_ref() {
                 if ch == '\n' {
@@ -227,7 +237,7 @@ pub fn strip_json_comments(text: &str) -> String {
                     break;
                 }
             }
-        } else if !in_string && c == '/' && chars.peek() == Some(&'*') {
+        } else if c == '/' && chars.peek() == Some(&'*') {
             chars.next(); // skip '*'
             while let Some(ch) = chars.next() {
                 if ch == '*' && chars.peek() == Some(&'/') {
@@ -286,13 +296,19 @@ pub fn is_agent_installed(config_path: &Path, format: ConfigFormat) -> bool {
             }
         }
         ConfigFormat::TomlMcpServers => {
-            content.contains("[mcp_servers.zenohx]")
-                || content.contains("[mcp_servers.\"zenohx\"]")
-                || (content.contains("[mcp_servers]")
-                    && content.lines().any(|l| {
-                        let t = l.trim();
-                        t.starts_with("zenohx") || t.starts_with("\"zenohx\"")
-                    }))
+            if let Ok(val) = toml::from_str::<toml::Value>(&content) {
+                val.get("mcp_servers")
+                    .and_then(|s| s.get("zenohx"))
+                    .is_some()
+            } else {
+                content.contains("[mcp_servers.zenohx]")
+                    || content.contains("[mcp_servers.\"zenohx\"]")
+                    || (content.contains("[mcp_servers]")
+                        && content.lines().any(|l| {
+                            let t = l.trim();
+                            t.starts_with("zenohx") || t.starts_with("\"zenohx\"")
+                        }))
+            }
         }
     }
 }

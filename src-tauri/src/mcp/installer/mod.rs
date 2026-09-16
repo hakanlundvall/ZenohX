@@ -12,11 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod mutator;
 pub mod registry;
 pub mod types;
 
 #[cfg(test)]
+mod mutator_tests;
+#[cfg(test)]
 mod tests;
 
+pub use mutator::{install_agent, install_agent_by_id, uninstall_agent, uninstall_agent_by_id};
 pub use registry::{get_agent_by_id, get_all_agents, resolve_binary_command};
 pub use types::{AgentTarget, ConfigFormat};
+

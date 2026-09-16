@@ -1,0 +1,378 @@
+// Copyright 2026 ZenohX Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use std::path::{Path, PathBuf};
+
+use super::types::{AgentTarget, ConfigFormat};
+
+/// Computes the backup path for a configuration file (<config_path>.bak).
+pub fn get_backup_path(path: &Path) -> PathBuf {
+    match path.file_name() {
+        Some(name) => {
+            let mut bak = name.to_os_string();
+            bak.push(".bak");
+            path.with_file_name(bak)
+        }
+        None => path.with_extension("bak"),
+    }
+}
+
+/// Computes the temporary path for atomic writes (<config_path>.tmp).
+pub fn get_temp_path(path: &Path) -> PathBuf {
+    match path.file_name() {
+        Some(name) => {
+            let mut tmp = name.to_os_string();
+            tmp.push(".tmp");
+            path.with_file_name(tmp)
+        }
+        None => path.with_extension("tmp"),
+    }
+}
+
+/// Performs safe atomic file write:
+/// 1. Ensures parent directory exists.
+/// 2. If the file exists, creates a backup copy at <config_path>.bak.
+/// 3. Writes content to <config_path>.tmp and atomically renames it to <config_path>.
+pub fn safe_write_config(path: &Path, content: &str) -> Result<(), String> {
+    // 1. Ensure parent directories exist
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                format!(
+                    "Failed to create directory {}: {}",
+                    parent.display(),
+                    e
+                )
+            })?;
+        }
+    }
+
+    // 2. Backup existing configuration file
+    if path.exists() {
+        let backup_path = get_backup_path(path);
+        std::fs::copy(path, &backup_path).map_err(|e| {
+            format!(
+                "Failed to create backup copy at {}: {}",
+                backup_path.display(),
+                e
+            )
+        })?;
+    }
+
+    // 3. Write atomically via temporary file and rename
+    let temp_path = get_temp_path(path);
+    std::fs::write(&temp_path, content).map_err(|e| {
+        format!(
+            "Failed to write temporary configuration file {}: {}",
+            temp_path.display(),
+            e
+        )
+    })?;
+
+    if let Err(e) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!(
+            "Failed to rename temporary file to {}: {}",
+            path.display(),
+            e
+        ));
+    }
+
+    Ok(())
+}
+
+/// Strips trailing commas from JSON text when not within a string literal.
+pub fn strip_trailing_commas(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        let c = chars[i];
+        if in_string {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            i += 1;
+        } else if c == '"' {
+            in_string = true;
+            out.push(c);
+            i += 1;
+        } else if c == ',' {
+            // Look ahead past whitespace to check if next character closes container
+            let mut j = i + 1;
+            while j < len && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if j < len && (chars[j] == '}' || chars[j] == ']') {
+                // Trailing comma before closing brace/bracket: omit
+                i += 1;
+            } else {
+                out.push(c);
+                i += 1;
+            }
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Parses JSON text into a Value, tolerating comments and trailing commas.
+fn parse_json_value(raw: &str) -> Result<serde_json::Value, String> {
+    if raw.trim().is_empty() {
+        return Ok(serde_json::Value::Object(serde_json::Map::new()));
+    }
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(raw) {
+        return Ok(val);
+    }
+    let no_comments = super::registry::strip_json_comments(raw);
+    let no_trailing = strip_trailing_commas(&no_comments);
+    serde_json::from_str::<serde_json::Value>(&no_trailing).map_err(|e| {
+        format!("Failed to parse JSON configuration: {}", e)
+    })
+}
+
+/// Mutates a JSON configuration file by merging a zenohx entry under the specified key.
+fn mutate_json(
+    path: &Path,
+    key: &str,
+    binary_cmd: &str,
+    binary_args: &[String],
+) -> Result<(), String> {
+    let raw = if path.exists() {
+        std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?
+    } else {
+        String::new()
+    };
+
+    let mut root = parse_json_value(&raw)?;
+    let root_map = root.as_object_mut().ok_or_else(|| {
+        format!("Root value in {} must be a JSON object", path.display())
+    })?;
+
+    let servers_val = root_map
+        .entry(key.to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+
+    let servers = if servers_val.is_object() {
+        servers_val.as_object_mut().unwrap()
+    } else {
+        *servers_val = serde_json::Value::Object(serde_json::Map::new());
+        servers_val.as_object_mut().unwrap()
+    };
+
+    let mut zenohx_entry = serde_json::Map::new();
+    zenohx_entry.insert(
+        "command".to_string(),
+        serde_json::Value::String(binary_cmd.to_string()),
+    );
+    zenohx_entry.insert(
+        "args".to_string(),
+        serde_json::Value::Array(
+            binary_args
+                .iter()
+                .map(|a| serde_json::Value::String(a.clone()))
+                .collect(),
+        ),
+    );
+
+    servers.insert("zenohx".to_string(), serde_json::Value::Object(zenohx_entry));
+
+    let serialized = serde_json::to_string_pretty(&root)
+        .map_err(|e| format!("Failed to serialize JSON: {}", e))?;
+
+    safe_write_config(path, &serialized)
+}
+
+/// Removes the zenohx entry from a JSON configuration file under the specified key.
+fn unmutate_json(path: &Path, key: &str) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+
+    let mut root = parse_json_value(&raw)?;
+    let root_map = match root.as_object_mut() {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+
+    if let Some(servers_val) = root_map.get_mut(key) {
+        if let Some(servers) = servers_val.as_object_mut() {
+            servers.remove("zenohx");
+        }
+    }
+
+    let serialized = serde_json::to_string_pretty(&root)
+        .map_err(|e| format!("Failed to serialize JSON: {}", e))?;
+
+    safe_write_config(path, &serialized)
+}
+
+/// Mutates a TOML configuration file by merging [mcp_servers.zenohx].
+fn mutate_toml(
+    path: &Path,
+    binary_cmd: &str,
+    binary_args: &[String],
+) -> Result<(), String> {
+    let raw = if path.exists() {
+        std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?
+    } else {
+        String::new()
+    };
+
+    let mut table: toml::Table = if raw.trim().is_empty() {
+        toml::Table::new()
+    } else {
+        raw.parse::<toml::Table>()
+            .map_err(|e| format!("Failed to parse TOML in {}: {}", path.display(), e))?
+    };
+
+    let mcp_servers_val = table
+        .entry("mcp_servers".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+
+    let mcp_servers = if let toml::Value::Table(t) = mcp_servers_val {
+        t
+    } else {
+        *mcp_servers_val = toml::Value::Table(toml::Table::new());
+        if let toml::Value::Table(t) = mcp_servers_val {
+            t
+        } else {
+            unreachable!()
+        }
+    };
+
+    let mut zenohx_entry = toml::Table::new();
+    zenohx_entry.insert(
+        "command".to_string(),
+        toml::Value::String(binary_cmd.to_string()),
+    );
+    zenohx_entry.insert(
+        "args".to_string(),
+        toml::Value::Array(
+            binary_args
+                .iter()
+                .map(|a| toml::Value::String(a.clone()))
+                .collect(),
+        ),
+    );
+
+    mcp_servers.insert("zenohx".to_string(), toml::Value::Table(zenohx_entry));
+
+    let serialized = toml::to_string_pretty(&table)
+        .map_err(|e| format!("Failed to serialize TOML: {}", e))?;
+
+    safe_write_config(path, &serialized)
+}
+
+/// Removes the zenohx entry from a TOML configuration file under [mcp_servers].
+fn unmutate_toml(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+
+    if raw.trim().is_empty() {
+        return Ok(());
+    }
+
+    let mut table: toml::Table = raw
+        .parse::<toml::Table>()
+        .map_err(|e| format!("Failed to parse TOML in {}: {}", path.display(), e))?;
+
+    if let Some(toml::Value::Table(mcp_servers)) = table.get_mut("mcp_servers") {
+        mcp_servers.remove("zenohx");
+    }
+
+    let serialized = toml::to_string_pretty(&table)
+        .map_err(|e| format!("Failed to serialize TOML: {}", e))?;
+
+    safe_write_config(path, &serialized)
+}
+
+/// Installs the ZenohX MCP server into the target agent's configuration.
+pub fn install_agent(
+    target: &AgentTarget,
+    binary_cmd: &str,
+    binary_args: &[String],
+) -> Result<AgentTarget, String> {
+    match target.format {
+        ConfigFormat::JsonMcpServers => {
+            mutate_json(&target.config_path, "mcpServers", binary_cmd, binary_args)?;
+        }
+        ConfigFormat::JsonContextServers => {
+            mutate_json(&target.config_path, "context_servers", binary_cmd, binary_args)?;
+        }
+        ConfigFormat::TomlMcpServers => {
+            mutate_toml(&target.config_path, binary_cmd, binary_args)?;
+        }
+    }
+
+    let mut updated = target.clone();
+    updated.detected = true;
+    updated.installed = true;
+    Ok(updated)
+}
+
+/// Uninstalls the ZenohX MCP server from the target agent's configuration.
+pub fn uninstall_agent(target: &AgentTarget) -> Result<AgentTarget, String> {
+    match target.format {
+        ConfigFormat::JsonMcpServers => {
+            unmutate_json(&target.config_path, "mcpServers")?;
+        }
+        ConfigFormat::JsonContextServers => {
+            unmutate_json(&target.config_path, "context_servers")?;
+        }
+        ConfigFormat::TomlMcpServers => {
+            unmutate_toml(&target.config_path)?;
+        }
+    }
+
+    let mut updated = target.clone();
+    updated.detected = target.detected || target.config_path.exists();
+    updated.installed = false;
+    Ok(updated)
+}
+
+/// Installs ZenohX MCP to an agent by its ID using resolved binary command.
+pub fn install_agent_by_id(agent_id: &str) -> Result<AgentTarget, String> {
+    let target = super::registry::get_agent_by_id(agent_id)
+        .ok_or_else(|| format!("Unknown agent ID: {}", agent_id))?;
+    let (binary_cmd, binary_args) = super::registry::resolve_binary_command();
+    install_agent(&target, &binary_cmd, &binary_args)
+}
+
+/// Uninstalls ZenohX MCP from an agent by its ID.
+pub fn uninstall_agent_by_id(agent_id: &str) -> Result<AgentTarget, String> {
+    let target = super::registry::get_agent_by_id(agent_id)
+        .ok_or_else(|| format!("Unknown agent ID: {}", agent_id))?;
+    uninstall_agent(&target)
+}
