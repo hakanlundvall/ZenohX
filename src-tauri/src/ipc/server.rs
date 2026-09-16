@@ -42,29 +42,9 @@ pub async fn handle_request_raw(
                 }),
             )
         }
-        IpcRequest::ExecuteTool { tool, args } => match tool.as_str() {
-            "zenohx_gui_switch_workspace" => {
-                let workspace = args
-                    .get("workspace")
-                    .and_then(|w| w.as_str())
-                    .unwrap_or("pubsub");
-                if let Some(app) = app_handle {
-                    let _ = app.emit(
-                        "zenohx://gui-switch-tab",
-                        serde_json::json!({ "workspace": workspace }),
-                    );
-                    let _ = app.emit(
-                        "zenohx://mcp-action",
-                        serde_json::json!({
-                            "action": "Switch Workspace",
-                            "details": format!("Switched to tab '{}'", workspace)
-                        }),
-                    );
-                }
-                IpcResponse::ok("live_gui", serde_json::json!({ "switched_to": workspace }))
-            }
-            _ => {
-                if let Some(app) = app_handle {
+        IpcRequest::ExecuteTool { tool, args } => {
+            if let Some(app) = app_handle {
+                if tool != "zenohx_gui_switch_workspace" && tool != "zenoh_publish" {
                     let _ = app.emit(
                         "zenohx://mcp-action",
                         serde_json::json!({
@@ -73,13 +53,16 @@ pub async fn handle_request_raw(
                         }),
                     );
                 }
-                if let Some(s) = state {
-                    crate::mcp::tools::execute_tool_on_state(&tool, args, s, app_handle).await
-                } else {
-                    IpcResponse::err("live_gui", "AppState not available")
-                }
             }
-        },
+            if tool == "zenohx_gui_switch_workspace" {
+                let default_state = crate::mcp::tools::get_headless_state().await;
+                crate::mcp::tools::execute_tool_on_state_with_mode(&tool, args, default_state, app_handle, "live_gui").await
+            } else if let Some(s) = state {
+                crate::mcp::tools::execute_tool_on_state_with_mode(&tool, args, s, app_handle, "live_gui").await
+            } else {
+                IpcResponse::err("live_gui", "AppState not available")
+            }
+        }
     }
 }
 
@@ -262,7 +245,7 @@ mod tests {
         };
         let resp = handle_request_raw(req, Some(&state), None).await;
         assert!(!resp.success);
-        assert_eq!(resp.mode, "headless");
+        assert_eq!(resp.mode, "live_gui");
         assert!(resp
             .error
             .unwrap()

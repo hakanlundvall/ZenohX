@@ -31,11 +31,17 @@ pub struct McpToolResult {
 static HEADLESS_STATE: tokio::sync::OnceCell<AppState> = tokio::sync::OnceCell::const_new();
 
 /// Resolves standard SQLite database path across OS platforms.
+/// Prioritizes Tauri v2 application data directory (`com.zenohx.app`) so headless mode
+/// shares the live GUI SQLite database.
 pub fn resolve_db_path() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         if let Ok(app_data) = std::env::var("APPDATA") {
-            let p = PathBuf::from(app_data).join("zenohx").join("zenohx.db");
+            let p0 = PathBuf::from(&app_data).join("com.zenohx.app").join("zenohx.db");
+            if p0.exists() {
+                return p0;
+            }
+            let p = PathBuf::from(&app_data).join("zenohx").join("zenohx.db");
             if p.exists() {
                 return p;
             }
@@ -44,7 +50,12 @@ pub fn resolve_db_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         if let Ok(home) = std::env::var("HOME") {
-            let p = PathBuf::from(home)
+            let p0 = PathBuf::from(&home)
+                .join("Library/Application Support/com.zenohx.app/zenohx.db");
+            if p0.exists() {
+                return p0;
+            }
+            let p = PathBuf::from(&home)
                 .join("Library/Application Support/zenohx/zenohx.db");
             if p.exists() {
                 return p;
@@ -54,12 +65,20 @@ pub fn resolve_db_path() -> PathBuf {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
-            let p = PathBuf::from(data_home).join("zenohx").join("zenohx.db");
+            let p0 = PathBuf::from(&data_home).join("com.zenohx.app").join("zenohx.db");
+            if p0.exists() {
+                return p0;
+            }
+            let p = PathBuf::from(&data_home).join("zenohx").join("zenohx.db");
             if p.exists() {
                 return p;
             }
         }
         if let Ok(home) = std::env::var("HOME") {
+            let p0 = PathBuf::from(&home).join(".local/share/com.zenohx.app/zenohx.db");
+            if p0.exists() {
+                return p0;
+            }
             let p1 = PathBuf::from(&home).join(".local/share/zenohx/zenohx.db");
             if p1.exists() {
                 return p1;
@@ -78,6 +97,36 @@ pub fn resolve_db_path() -> PathBuf {
     let local = PathBuf::from("zenohx.db");
     if local.exists() {
         return local;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(app_data) = std::env::var("APPDATA") {
+            let default_dir = PathBuf::from(app_data).join("com.zenohx.app");
+            let _ = std::fs::create_dir_all(&default_dir);
+            return default_dir.join("zenohx.db");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let default_dir = PathBuf::from(home).join("Library/Application Support/com.zenohx.app");
+            let _ = std::fs::create_dir_all(&default_dir);
+            return default_dir.join("zenohx.db");
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
+            let default_dir = PathBuf::from(data_home).join("com.zenohx.app");
+            let _ = std::fs::create_dir_all(&default_dir);
+            return default_dir.join("zenohx.db");
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            let default_dir = PathBuf::from(home).join(".local/share/com.zenohx.app");
+            let _ = std::fs::create_dir_all(&default_dir);
+            return default_dir.join("zenohx.db");
+        }
     }
 
     if let Ok(home) = std::env::var("HOME") {
@@ -435,6 +484,17 @@ pub async fn execute_tool_on_state(
     } else {
         "headless"
     };
+    execute_tool_on_state_with_mode(tool, args, state, app_handle, mode).await
+}
+
+/// Executes a tool on `AppState` directly with an explicit execution mode.
+pub async fn execute_tool_on_state_with_mode(
+    tool: &str,
+    args: serde_json::Value,
+    state: &AppState,
+    app_handle: Option<&AppHandle>,
+    mode: &str,
+) -> IpcResponse {
 
     match tool {
         "zenoh_scout" => {
@@ -920,6 +980,8 @@ pub async fn execute_tool_on_state(
                         "details": format!("Switched to tab '{}'", workspace)
                     }),
                 );
+            }
+            if mode == "live_gui" {
                 IpcResponse::ok("live_gui", json!({ "switched_to": workspace }))
             } else {
                 IpcResponse::err("headless", "Desktop GUI is not running; cannot switch workspace")
@@ -928,7 +990,7 @@ pub async fn execute_tool_on_state(
 
         "zenohx_gui_get_state" => {
             let sessions = state.session_manager.get_all_sessions().await;
-            if app_handle.is_some() {
+            if mode == "live_gui" {
                 IpcResponse::ok(
                     "live_gui",
                     json!({
@@ -1003,7 +1065,7 @@ pub async fn dispatch_mcp_tool(name: &str, args: serde_json::Value) -> McpToolRe
 async fn dispatch_headless(name: &str, args: serde_json::Value) -> McpToolResult {
     if name == "zenohx_gui_switch_workspace" {
         return McpToolResult {
-            text: "Desktop GUI is not running; cannot switch workspace".to_string(),
+            text: "[Mode: Headless (GUI not running)] Error: Desktop GUI is not running; cannot switch workspace".to_string(),
             is_error: true,
         };
     }
@@ -1034,6 +1096,8 @@ async fn dispatch_headless(name: &str, args: serde_json::Value) -> McpToolResult
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static TEST_DISPATCH_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn create_test_state() -> AppState {
         let session_manager = crate::zenoh::SessionManager::new();
@@ -1279,6 +1343,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_dispatch_mcp_tool_headless_fallback() {
+        let _lock = TEST_DISPATCH_MUTEX.lock().await;
         // Since no IPC server is running on default socket in unit tests,
         // dispatch_mcp_tool should automatically fall back to headless.
         let resp = dispatch_mcp_tool("zenoh_get_sessions", json!({})).await;
@@ -1407,6 +1472,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_dispatch_mcp_tool_live_gui_mode() {
+        let _lock = TEST_DISPATCH_MUTEX.lock().await;
         let temp_dir = std::env::temp_dir().join(format!("zenohx-mcp-test-{}", Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let socket_path = temp_dir.join("zenohx.sock");
@@ -1428,12 +1494,19 @@ mod tests {
         });
 
         // Set XDG_RUNTIME_DIR to point to our test socket
+        let prev_xdg = std::env::var("XDG_RUNTIME_DIR").ok();
         std::env::set_var("XDG_RUNTIME_DIR", &temp_dir);
 
         let resp = dispatch_mcp_tool(
             "zenohx_gui_switch_workspace",
             json!({ "workspace": "query" }),
         ).await;
+
+        if let Some(prev) = prev_xdg {
+            std::env::set_var("XDG_RUNTIME_DIR", prev);
+        } else {
+            std::env::remove_var("XDG_RUNTIME_DIR");
+        }
 
         assert!(!resp.is_error);
         assert!(resp.text.contains("[Mode: Live GUI]"));
@@ -1443,6 +1516,5 @@ mod tests {
         let _ = server_task.await;
         let _ = std::fs::remove_file(&socket_path);
         let _ = std::fs::remove_dir_all(&temp_dir);
-        std::env::remove_var("XDG_RUNTIME_DIR");
     }
 }

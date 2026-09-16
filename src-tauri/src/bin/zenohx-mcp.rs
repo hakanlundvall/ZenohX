@@ -12,17 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod protocol;
-pub mod tools;
+use zenohx_lib::mcp::protocol::run_mcp_stdio_server;
 
-#[cfg(test)]
-mod protocol_tests;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!(
+        "[zenohx-mcp] Starting ZenohX MCP server on stdio (PID: {})...",
+        std::process::id()
+    );
 
-pub use protocol::{
-    handle_jsonrpc_message, run_mcp_server_stream, run_mcp_stdio_server, JsonRpcError,
-    JsonRpcRequest, JsonRpcResponse, McpResource, McpTool,
-};
-pub use tools::{
-    dispatch_mcp_tool, execute_tool_on_state, execute_tool_on_state_with_mode,
-    get_resource_definitions, get_tool_definitions, McpToolResult,
-};
+    if let Err(e) = run_mcp_stdio_server().await {
+        eprintln!("[zenohx-mcp] Server exited with error: {}", e);
+        std::process::exit(1);
+    }
+
+    eprintln!("[zenohx-mcp] Stdio stream closed, exiting.");
+    Ok(())
+}
