@@ -15,6 +15,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+
+## [v0.7.0] - 2026-09-16
+
+### 🚀 Added & Enhanced
+- **ipc:** add IPC types, socket path resolution, and client framing
+- **ipc:** implement Tauri IPC server and request dispatcher
+- **mcp:** implement MCP JSON-RPC 2.0 protocol engine
+- **mcp:** implement tool definitions and dual-mode dispatch logic
+- **cli:** add standalone zenohx-mcp binary and npm script
+- **ui:** add useMcpListener hook and AI action notification toast
+- **installer:** add agent registry and cross-platform path resolution
+- **installer:** implement safe JSON and TOML configuration mutator
+- **cli:** add install, uninstall, and list-agents CLI commands to zenohx-mcp
+- **tauri:** add Tauri commands for MCP agent detection and installation
+- **ui:** add AI & Agents tab in ZenohX settings
+- **installer:** merge automated MCP installation to AI agents into main
+- **ui:** display detected agents only, add search filter and Copy as JSON button
+- **mcp:** add zenoh_get_profiles tool, clarify instructions, and auto-sync agent guidelines
+
+### 🐛 Fixed
+- **release:** require Enter key for confirmation prompts in release script
+- **ipc:** align Windows socket path with named pipe spec
+- **mcp:** cap stream frame size to 16MB and add MCP client launch docs
+- **installer:** avoid unnecessary mutation and backup on uninstall if zenohx is absent
+- **cli:** isolate CLI unit tests using mock PlatformPaths
+- **installer:** use toml_edit to preserve comments and formatting in TOML configuration files
+- **cargo:** add default-run = "zenohx" to Cargo.toml for multiple binaries
+
+### 🔧 Maintenance
+- **spec:** add MCP server and live GUI control specification
+- **plan:** add implementation plan for ZenohX MCP server and live GUI control
+- **mcp:** add automated E2E test for zenohx-mcp stdio protocol
+- **spec:** add automated MCP agent installation specification
+- **plan:** add implementation plan for automated MCP agent installation
+- **installer:** add automated test for agent installation CLI
+- **installer:** support Windows platform paths and binary extension in e2e test
+- **spec:** document toml_edit comment preservation and JSON backup guarantee
+- **isolation:** isolate IPC socket override and query test namespaces
+- **plan:** mark all tasks completed in auto-install-mcp-to-agents plan
+
+---
 ## [v0.6.2] - 2026-09-15
 
 ### ⚡ Changed & Refactored
