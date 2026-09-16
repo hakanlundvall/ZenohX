@@ -38,6 +38,8 @@ const SUPPORTED_AGENT_IDS = [
   'roo-code',
   'zed',
   'codex',
+  'hermes',
+  'openclaw',
 ];
 
 /**

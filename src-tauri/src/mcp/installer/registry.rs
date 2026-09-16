@@ -205,6 +205,16 @@ pub fn resolve_agent_paths(
             let app_dirs = vec![paths.home.join(".codex")];
             Some((config_path, app_dirs))
         }
+        "hermes" => {
+            let config_path = paths.home.join(".hermes").join("config.yaml");
+            let app_dirs = vec![paths.home.join(".hermes")];
+            Some((config_path, app_dirs))
+        }
+        "openclaw" => {
+            let config_path = paths.home.join(".openclaw").join("openclaw.json");
+            let app_dirs = vec![paths.home.join(".openclaw")];
+            Some((config_path, app_dirs))
+        }
         _ => None,
     }
 }
@@ -310,6 +320,28 @@ pub fn is_agent_installed(config_path: &Path, format: ConfigFormat) -> bool {
                         }))
             }
         }
+        ConfigFormat::YamlMcpServers => {
+            let mut in_mcp_servers = false;
+            let mut mcp_indent = 0;
+            for line in content.lines() {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with('#') || trimmed.is_empty() {
+                    continue;
+                }
+                let indent = line.len() - trimmed.len();
+                if trimmed.starts_with("mcp_servers:") {
+                    in_mcp_servers = true;
+                    mcp_indent = indent;
+                } else if in_mcp_servers {
+                    if indent <= mcp_indent {
+                        in_mcp_servers = false;
+                    } else if trimmed.starts_with("zenohx:") {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
     }
 }
 
@@ -338,8 +370,8 @@ pub fn evaluate_agent(
     })
 }
 
-/// Static registry of all 8 supported agent targets.
-const SUPPORTED_AGENTS: [(&str, &str, ConfigFormat); 8] = [
+/// Static registry of all 10 supported agent targets.
+const SUPPORTED_AGENTS: [(&str, &str, ConfigFormat); 10] = [
     ("antigravity", "Antigravity CLI", ConfigFormat::JsonMcpServers),
     ("claude", "Claude Desktop", ConfigFormat::JsonMcpServers),
     ("cursor", "Cursor IDE", ConfigFormat::JsonMcpServers),
@@ -348,6 +380,8 @@ const SUPPORTED_AGENTS: [(&str, &str, ConfigFormat); 8] = [
     ("roo-code", "VS Code (Roo Code)", ConfigFormat::JsonMcpServers),
     ("zed", "Zed Editor", ConfigFormat::JsonContextServers),
     ("codex", "Codex CLI", ConfigFormat::TomlMcpServers),
+    ("hermes", "Hermes Agent", ConfigFormat::YamlMcpServers),
+    ("openclaw", "OpenClaw", ConfigFormat::JsonMcpServers),
 ];
 
 /// Returns detection and installation status for all supported agents on the host.

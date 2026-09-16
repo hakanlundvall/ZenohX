@@ -171,13 +171,24 @@ The MCP server operates seamlessly in two runtime modes:
 
 ### Client Configuration
 
-You can configure your MCP client using either the compiled release binary or via npm script.
+You can configure your MCP client automatically using the built-in installer or manually using JSON.
+
+#### Automatic Setup (One-Click or CLI)
+
+ZenohX can automatically detect and configure your local AI agents (Claude Desktop, Cursor, Antigravity, Windsurf, Cline, Roo Code, Codex, Hermes, OpenClaw):
+
+* **From Desktop GUI**: Navigate to **Settings** &rarr; **Agents** and click **Install** next to any detected agent, or **Install All Detected**.
+* **From CLI**: Run `zenohx-mcp install <agent_id>` (or `zenohx-mcp install --all`). Run `zenohx-mcp list` to view all supported agents and their detection status.
+
+---
+
+#### Manual Configuration
 
 > [!IMPORTANT]
 > **Always use `--silent` with npm:**
 > When configuring MCP clients via `npm run`, you **must** pass `--silent` (e.g., `npm run --silent mcp`). Without `--silent`, npm writes startup banners and lifecycle logs to `stdout`, which corrupts the stdio JSON-RPC protocol stream and breaks MCP client communication.
 
-#### 1. Claude Desktop
+##### 1. Claude Desktop
 
 Add the `zenohx` server configuration to your `claude_desktop_config.json`:
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
@@ -208,7 +219,7 @@ Add the `zenohx` server configuration to your `claude_desktop_config.json`:
 }
 ```
 
-#### 2. Cursor IDE
+##### 2. Cursor IDE
 
 In Cursor Settings &rarr; **Features** &rarr; **MCP** (or `.cursor/mcp.json` in your workspace):
 
@@ -222,7 +233,7 @@ In Cursor Settings &rarr; **Features** &rarr; **MCP** (or `.cursor/mcp.json` in 
 }
 ```
 
-#### 3. Antigravity & Generic MCP Clients
+##### 3. Antigravity & Generic MCP Clients
 
 In your client's MCP configuration settings:
 
@@ -249,6 +260,7 @@ In your client's MCP configuration settings:
 | `zenoh_connect_session` | Establish a new Zenoh session with specific mode (Peer, Client, Router) and connect/listen locators. |
 | `zenoh_disconnect_session` | Gracefully close an active Zenoh session. |
 | `zenoh_get_sessions` | List active sessions, their runtime status, and configured endpoints. |
+| `zenoh_get_profiles` | List saved connection profiles (configured nodes) from SQLite. |
 | `zenoh_publish` | Publish sample payloads to a Zenoh key expression with QoS and encoding parameters. |
 | `zenoh_subscribe` | Subscribe to key expressions and stream incoming samples to the message buffer. |
 | `zenoh_unsubscribe` | Cancel an active key expression subscription. |

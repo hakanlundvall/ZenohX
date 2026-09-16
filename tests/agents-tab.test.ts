@@ -323,4 +323,42 @@ describe('AI & Agents MCP IPC and Tab State Transitions', () => {
     );
     assert.equal(searchNone.length, 0);
   });
+
+  test('Supports Hermes Agent (YAML) and OpenClaw (JSON) format mapping', () => {
+    const formatConfigType = (format: AgentTarget['format']): string => {
+      switch (format) {
+        case 'JsonMcpServers':
+          return 'JSON (mcpServers)';
+        case 'JsonContextServers':
+          return 'JSON (context_servers)';
+        case 'TomlMcpServers':
+          return 'TOML ([mcp_servers])';
+        case 'YamlMcpServers':
+          return 'YAML (mcp_servers)';
+        default:
+          return format;
+      }
+    };
+
+    const hermesAgent: AgentTarget = {
+      id: 'hermes',
+      name: 'Hermes Agent',
+      detected: true,
+      installed: false,
+      config_path: '/home/user/.hermes/config.yaml',
+      format: 'YamlMcpServers',
+    };
+
+    const openclawAgent: AgentTarget = {
+      id: 'openclaw',
+      name: 'OpenClaw',
+      detected: true,
+      installed: false,
+      config_path: '/home/user/.openclaw/openclaw.json',
+      format: 'JsonMcpServers',
+    };
+
+    assert.equal(formatConfigType(hermesAgent.format), 'YAML (mcp_servers)');
+    assert.equal(formatConfigType(openclawAgent.format), 'JSON (mcpServers)');
+  });
 });

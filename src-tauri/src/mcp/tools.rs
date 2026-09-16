@@ -166,7 +166,7 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
     vec![
         json!({
             "name": "zenoh_scout",
-            "description": "Scouts the local network for Zenoh routers, peers, and locators.",
+            "description": "Scans the local physical network via multicast for external Zenoh routers, peers, and locators. NOTE: To inspect or interact with nodes inside the ZenohX app, use 'zenoh_get_sessions' or 'zenoh_get_profiles' instead.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -180,7 +180,7 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
         }),
         json!({
             "name": "zenoh_connect_session",
-            "description": "Opens a Zenoh session using a saved profile or explicit connection locators.",
+            "description": "Starts/opens a Zenoh session. To start an existing node configured in the app, pass 'profile_id' (retrieve IDs via 'zenoh_get_profiles'). Only pass mode/locators without profile_id if an ad-hoc session is explicitly requested.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -221,7 +221,15 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
         }),
         json!({
             "name": "zenoh_get_sessions",
-            "description": "Returns active Zenoh sessions, their ZIDs, modes, and connected locators.",
+            "description": "Returns active Zenoh nodes/sessions currently running in the ZenohX app. ALWAYS call this first to discover active node sessions before subscribing, publishing, or creating new sessions.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "zenoh_get_profiles",
+            "description": "Lists all saved connection profiles (nodes) configured in the ZenohX app (e.g. Local Router, Edge Client). Use this to see configured nodes and retrieve their profile IDs.",
             "inputSchema": {
                 "type": "object",
                 "properties": {}
@@ -229,7 +237,7 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
         }),
         json!({
             "name": "zenoh_publish",
-            "description": "Publishes a data sample to the specified Zenoh key expression.",
+            "description": "Publishes a data sample to the specified Zenoh key expression. Specify 'session_id' to publish through an existing running node session (from zenoh_get_sessions).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -261,7 +269,7 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
         }),
         json!({
             "name": "zenoh_subscribe",
-            "description": "Declares a subscriber on a key expression to capture incoming samples.",
+            "description": "Declares a subscriber on a key expression to capture incoming samples. Specify 'session_id' to attach the subscriber to a specific running node session (from zenoh_get_sessions).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -609,6 +617,13 @@ pub async fn execute_tool_on_state_with_mode(
         "zenoh_get_sessions" => {
             let sessions = state.session_manager.get_all_sessions().await;
             IpcResponse::ok(mode, json!(sessions))
+        }
+
+        "zenoh_get_profiles" => {
+            match state.db.get_profiles() {
+                Ok(profiles) => IpcResponse::ok(mode, json!(profiles)),
+                Err(e) => IpcResponse::err(mode, format!("Failed to load profiles: {}", e)),
+            }
         }
 
         "zenoh_publish" => {
@@ -1116,8 +1131,8 @@ mod tests {
         let tools = get_tool_definitions();
         assert_eq!(
             tools.len(),
-            13,
-            "Expected exactly 13 MCP tools, found {}",
+            14,
+            "Expected exactly 14 MCP tools, found {}",
             tools.len()
         );
         let expected_names = [
@@ -1125,6 +1140,7 @@ mod tests {
             "zenoh_connect_session",
             "zenoh_disconnect_session",
             "zenoh_get_sessions",
+            "zenoh_get_profiles",
             "zenoh_publish",
             "zenoh_subscribe",
             "zenoh_unsubscribe",
@@ -1479,6 +1495,33 @@ mod tests {
 
         // Disconnect
         let _ = execute_tool_on_state("zenoh_disconnect_session", json!({}), &state, None).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_execute_tool_get_profiles() {
+        let state = create_test_state();
+
+        let profile = crate::db::models::ConnectionProfile {
+            id: "profile-123".to_string(),
+            name: "Test Router Node".to_string(),
+            mode: "router".to_string(),
+            connect_locators: vec![],
+            listen_locators: vec!["tcp/127.0.0.1:7447".to_string()],
+            scout_multicast: true,
+            user_auth: None,
+            tls_config: None,
+            custom_config: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+        state.db.save_profile(&profile).expect("save profile");
+
+        let resp = execute_tool_on_state("zenoh_get_profiles", json!({}), &state, None).await;
+        assert!(resp.success);
+        let profiles = resp.data.as_array().expect("profiles array");
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0]["id"], "profile-123");
+        assert_eq!(profiles[0]["name"], "Test Router Node");
     }
 
     #[cfg(unix)]

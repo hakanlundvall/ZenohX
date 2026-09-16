@@ -311,6 +311,217 @@ fn unmutate_toml(path: &Path) -> Result<(), String> {
     safe_write_config(path, &serialized)
 }
 
+/// Mutates a YAML configuration file by merging mcp_servers.zenohx while preserving comments and structure.
+fn mutate_yaml(
+    path: &Path,
+    binary_cmd: &str,
+    binary_args: &[String],
+) -> Result<(), String> {
+    let raw = if path.exists() {
+        std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?
+    } else {
+        String::new()
+    };
+
+    let args_str = serde_json::to_string(binary_args).unwrap_or_else(|_| "[]".to_string());
+
+    if raw.trim().is_empty() {
+        let serialized = format!(
+            "mcp_servers:\n  zenohx:\n    command: \"{}\"\n    args: {}\n",
+            binary_cmd, args_str
+        );
+        return safe_write_config(path, &serialized);
+    }
+
+    let mut lines: Vec<String> = raw.lines().map(|s| s.to_string()).collect();
+
+    // 1. Find line with `mcp_servers:`
+    let mut mcp_idx = None;
+    let mut mcp_indent = 0;
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("mcp_servers:") {
+            mcp_idx = Some(i);
+            mcp_indent = line.len() - trimmed.len();
+            break;
+        }
+    }
+
+    match mcp_idx {
+        None => {
+            // No mcp_servers: block found. Append at the end.
+            if !lines.is_empty() && !lines.last().unwrap().trim().is_empty() {
+                lines.push(String::new());
+            }
+            lines.push("mcp_servers:".to_string());
+            lines.push("  zenohx:".to_string());
+            lines.push(format!("    command: \"{}\"", binary_cmd));
+            lines.push(format!("    args: {}", args_str));
+        }
+        Some(idx) => {
+            // Handle cases where mcp_servers: was written like `mcp_servers: {}`
+            let line_trimmed = lines[idx].trim();
+            if line_trimmed == "mcp_servers: {}" || line_trimmed == "mcp_servers: null" {
+                lines[idx] = format!("{}mcp_servers:", " ".repeat(mcp_indent));
+            }
+
+            // Detect child indentation
+            let mut child_indent = mcp_indent + 2;
+            let mut zx_idx = None;
+            let mut zx_end_idx = None;
+
+            let mut i = idx + 1;
+            while i < lines.len() {
+                let cur = &lines[i];
+                let cur_trimmed = cur.trim_start();
+                if cur_trimmed.is_empty() || cur_trimmed.starts_with('#') {
+                    i += 1;
+                    continue;
+                }
+                let cur_indent = cur.len() - cur_trimmed.len();
+                if cur_indent <= mcp_indent {
+                    break;
+                }
+                // First valid child determines child_indent
+                if child_indent == mcp_indent + 2 {
+                    child_indent = cur_indent;
+                }
+                if cur_trimmed.starts_with("zenohx:") && cur_indent == child_indent {
+                    zx_idx = Some(i);
+                    let mut j = i + 1;
+                    while j < lines.len() {
+                        let sub = &lines[j];
+                        let sub_trimmed = sub.trim_start();
+                        if sub_trimmed.is_empty() {
+                            j += 1;
+                            continue;
+                        }
+                        let sub_indent = sub.len() - sub_trimmed.len();
+                        if sub_indent <= child_indent {
+                            break;
+                        }
+                        j += 1;
+                    }
+                    zx_end_idx = Some(j);
+                    break;
+                }
+                i += 1;
+            }
+
+            let indent_str = " ".repeat(child_indent);
+            let inner_indent_str = " ".repeat(child_indent + 2);
+            let new_entry = vec![
+                format!("{}zenohx:", indent_str),
+                format!("{}command: \"{}\"", inner_indent_str, binary_cmd),
+                format!("{}args: {}", inner_indent_str, args_str),
+            ];
+
+            if let (Some(start), Some(end)) = (zx_idx, zx_end_idx) {
+                // Replace existing zenohx block
+                lines.splice(start..end, new_entry);
+            } else {
+                // Insert new zenohx entry right after mcp_servers:
+                lines.splice(idx + 1..idx + 1, new_entry);
+            }
+        }
+    }
+
+    let mut serialized = lines.join("\n");
+    if !serialized.ends_with('\n') {
+        serialized.push('\n');
+    }
+    safe_write_config(path, &serialized)
+}
+
+/// Removes the zenohx entry from a YAML configuration file under mcp_servers while preserving comments.
+fn unmutate_yaml(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+
+    if raw.trim().is_empty() {
+        return Ok(());
+    }
+
+    let mut lines: Vec<String> = raw.lines().map(|s| s.to_string()).collect();
+
+    let mut mcp_idx = None;
+    let mut mcp_indent = 0;
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("mcp_servers:") {
+            mcp_idx = Some(i);
+            mcp_indent = line.len() - trimmed.len();
+            break;
+        }
+    }
+
+    let mcp_idx = match mcp_idx {
+        Some(idx) => idx,
+        None => return Ok(()),
+    };
+
+    let mut zx_idx = None;
+    let mut zx_end_idx = None;
+    let mut i = mcp_idx + 1;
+
+    while i < lines.len() {
+        let cur = &lines[i];
+        let cur_trimmed = cur.trim_start();
+        if cur_trimmed.is_empty() || cur_trimmed.starts_with('#') {
+            i += 1;
+            continue;
+        }
+        let cur_indent = cur.len() - cur_trimmed.len();
+        if cur_indent <= mcp_indent {
+            break;
+        }
+        if cur_trimmed.starts_with("zenohx:") {
+            zx_idx = Some(i);
+            let mut j = i + 1;
+            while j < lines.len() {
+                let sub = &lines[j];
+                let sub_trimmed = sub.trim_start();
+                if sub_trimmed.is_empty() {
+                    j += 1;
+                    continue;
+                }
+                let sub_indent = sub.len() - sub_trimmed.len();
+                if sub_indent <= cur_indent {
+                    break;
+                }
+                j += 1;
+            }
+            zx_end_idx = Some(j);
+            break;
+        }
+        i += 1;
+    }
+
+    if let (Some(start), Some(end)) = (zx_idx, zx_end_idx) {
+        lines.drain(start..end);
+        let mut serialized = lines.join("\n");
+        if !serialized.ends_with('\n') {
+            serialized.push('\n');
+        }
+        safe_write_config(path, &serialized)?;
+    }
+
+    Ok(())
+}
+
 /// Installs the ZenohX MCP server into the target agent's configuration.
 pub fn install_agent(
     target: &AgentTarget,
@@ -327,12 +538,73 @@ pub fn install_agent(
         ConfigFormat::TomlMcpServers => {
             mutate_toml(&target.config_path, binary_cmd, binary_args)?;
         }
+        ConfigFormat::YamlMcpServers => {
+            mutate_yaml(&target.config_path, binary_cmd, binary_args)?;
+        }
+    }
+
+    if target.id == "antigravity" {
+        if let Some(home) = super::registry::get_home_dir() {
+            sync_antigravity_mcp_directory(&home);
+        }
     }
 
     let mut updated = target.clone();
     updated.detected = true;
     updated.installed = true;
     Ok(updated)
+}
+
+pub const ZENOHX_MCP_INSTRUCTIONS: &str = r#"# ZenohX MCP Server Guidelines
+
+ZenohX is a visual desktop application and debugging workbench for Zenoh networks (routers, peers, and clients).
+
+## Best Practices & Interaction Guidelines
+
+### 1. Interacting with Nodes in the ZenohX Application
+* **Do NOT create ad-hoc sessions blindly**: The user usually runs the ZenohX GUI with one or more nodes/sessions already active or configured.
+* **Inspect Active Nodes First**: Always call `zenoh_get_sessions` to retrieve running nodes and active sessions. Inspect the node's `id` (session UUID), `zid` (Zenoh ID), and `mode` (router, peer, client).
+* **Inspect Saved Profiles**: Call `zenoh_get_profiles` to list the user's saved connection profiles (e.g. Local Router, Edge Client).
+* **Starting a Configured Node**: If you need to start a session for a configured profile, call `zenoh_connect_session` with `profile_id: "<profile-id>"`. Do not create ad-hoc generic sessions unless explicitly asked.
+
+### 2. Publishing and Subscribing
+* **Target the Active Session**: Always pass the `session_id` obtained from `zenoh_get_sessions` into `zenoh_publish`, `zenoh_subscribe`, and `zenoh_query`.
+* **Verifying Delivery**: Use `zenoh_get_messages` with `key_expr` or `limit` to confirm that messages published or received are logged in the app's history.
+
+### 3. Network Scouting vs Local Inspection
+* `zenoh_get_sessions` / `zenoh_get_profiles`: Inspects the nodes and sessions inside the ZenohX application.
+* `zenoh_scout`: Scans the external physical network via UDP multicast to discover external Zenoh daemons/routers on the LAN. Do NOT use `zenoh_scout` when the user asks to see or interact with nodes inside ZenohX.
+"#;
+
+/// Synchronizes the instructions.md and lazy tool schemas into Antigravity CLI MCP directory.
+pub fn sync_antigravity_mcp_directory(home_path: &Path) {
+    let mcp_dir = home_path
+        .join(".gemini")
+        .join("antigravity-cli")
+        .join("mcp")
+        .join("zenohx");
+    let _ = std::fs::create_dir_all(&mcp_dir);
+    let _ = std::fs::write(mcp_dir.join("instructions.md"), ZENOHX_MCP_INSTRUCTIONS);
+
+    // Sync lazy JSON tool definitions
+    let tools = crate::mcp::tools::get_tool_definitions();
+    for tool in tools {
+        if let Some(name) = tool.get("name").and_then(|n| n.as_str()) {
+            let schema_file = mcp_dir.join(format!("{}.json", name));
+            let input_schema = tool
+                .get("inputSchema")
+                .cloned()
+                .unwrap_or(serde_json::json!({ "type": "object", "properties": {} }));
+            let schema_obj = serde_json::json!({
+                "name": name,
+                "description": tool.get("description").and_then(|d| d.as_str()).unwrap_or(""),
+                "parameters": input_schema,
+            });
+            if let Ok(serialized) = serde_json::to_string(&schema_obj) {
+                let _ = std::fs::write(schema_file, serialized);
+            }
+        }
+    }
 }
 
 /// Uninstalls the ZenohX MCP server from the target agent's configuration.
@@ -346,6 +618,9 @@ pub fn uninstall_agent(target: &AgentTarget) -> Result<AgentTarget, String> {
         }
         ConfigFormat::TomlMcpServers => {
             unmutate_toml(&target.config_path)?;
+        }
+        ConfigFormat::YamlMcpServers => {
+            unmutate_yaml(&target.config_path)?;
         }
     }
 

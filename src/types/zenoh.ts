@@ -446,7 +446,11 @@ export interface MdnsStatus {
 // AI & Agents MCP Installer Types
 // ============================================================================
 
-export type ConfigFormat = 'JsonMcpServers' | 'JsonContextServers' | 'TomlMcpServers';
+export type ConfigFormat =
+  | 'JsonMcpServers'
+  | 'JsonContextServers'
+  | 'TomlMcpServers'
+  | 'YamlMcpServers';
 
 export interface AgentTarget {
   id: string;

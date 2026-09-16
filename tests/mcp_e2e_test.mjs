@@ -27,6 +27,7 @@ const EXPECTED_TOOLS = [
   'zenoh_connect_session',
   'zenoh_disconnect_session',
   'zenoh_get_sessions',
+  'zenoh_get_profiles',
   'zenoh_publish',
   'zenoh_subscribe',
   'zenoh_unsubscribe',
@@ -151,7 +152,7 @@ async function runMcpE2ETest() {
         console.log('✔ Step 2: Received valid "tools/list" response');
         assert.ok(Array.isArray(resp.result?.tools), 'tools must be an array');
         const tools = resp.result.tools;
-        assert.equal(tools.length, 13, `Expected 13 tools, got ${tools.length}`);
+        assert.equal(tools.length, EXPECTED_TOOLS.length, `Expected ${EXPECTED_TOOLS.length} tools, got ${tools.length}`);
 
         const toolNames = tools.map((t) => t.name);
         for (const expected of EXPECTED_TOOLS) {

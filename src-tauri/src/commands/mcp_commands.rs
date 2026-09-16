@@ -122,7 +122,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_mcp_agents() {
         let agents = get_mcp_agents().await.expect("should return agents");
-        assert_eq!(agents.len(), 8);
+        assert_eq!(agents.len(), 10);
         let ids: Vec<&str> = agents.iter().map(|a| a.id.as_str()).collect();
         assert!(ids.contains(&"antigravity"));
         assert!(ids.contains(&"claude"));
@@ -132,6 +132,8 @@ mod tests {
         assert!(ids.contains(&"roo-code"));
         assert!(ids.contains(&"zed"));
         assert!(ids.contains(&"codex"));
+        assert!(ids.contains(&"hermes"));
+        assert!(ids.contains(&"openclaw"));
     }
 
     #[tokio::test]

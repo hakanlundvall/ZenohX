@@ -25,6 +25,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    if let Some(home) = zenohx_lib::mcp::installer::get_home_dir() {
+        let mcp_dir = home.join(".gemini").join("antigravity-cli").join("mcp").join("zenohx");
+        if mcp_dir.exists() {
+            zenohx_lib::mcp::installer::mutator::sync_antigravity_mcp_directory(&home);
+        }
+    }
+
     eprintln!(
         "[zenohx-mcp] Starting ZenohX MCP server on stdio (PID: {})...",
         std::process::id()

@@ -24,6 +24,6 @@ mod tests;
 
 pub use cli::handle_cli_args;
 pub use mutator::{install_agent, install_agent_by_id, uninstall_agent, uninstall_agent_by_id};
-pub use registry::{get_agent_by_id, get_all_agents, resolve_binary_command};
+pub use registry::{get_agent_by_id, get_all_agents, get_home_dir, resolve_binary_command};
 pub use types::{AgentTarget, ConfigFormat};
 

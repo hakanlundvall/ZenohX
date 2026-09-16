@@ -384,4 +384,105 @@ command = "tool"
         assert!(!post_uninstall.contains("zenohx"));
         assert!(post_uninstall.contains("existing_tool"));
     }
+
+    #[test]
+    fn test_mutate_openclaw_json_and_uninstall() {
+        let temp_dir = TempDir::new();
+        let config_path = temp_dir.path().join("openclaw.json");
+        fs::write(&config_path, r#"{"mcpServers": {"existing": {"command": "test"}}}"#).unwrap();
+
+        let target = AgentTarget {
+            id: "openclaw".to_string(),
+            name: "OpenClaw".to_string(),
+            detected: true,
+            installed: false,
+            config_path: config_path.clone(),
+            format: ConfigFormat::JsonMcpServers,
+        };
+
+        let updated = install_agent(&target, "/path/to/zenohx-mcp", &["arg1".to_string()]).expect("install ok");
+        assert!(updated.installed);
+
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("\"zenohx\""));
+        assert!(content.contains("\"arg1\""));
+        assert!(content.contains("\"existing\""));
+
+        let uninstalled = uninstall_agent(&updated).expect("uninstall ok");
+        assert!(!uninstalled.installed);
+        let post_uninstall = fs::read_to_string(&config_path).unwrap();
+        assert!(!post_uninstall.contains("\"zenohx\""));
+        assert!(post_uninstall.contains("\"existing\""));
+    }
+
+    #[test]
+    fn test_mutate_hermes_yaml_and_uninstall_preserves_comments() {
+        let temp_dir = TempDir::new();
+        let config_path = temp_dir.path().join("config.yaml");
+        let initial_yaml = r#"# Hermes Agent Settings
+model: "claude-sonnet" # Model choice
+
+# MCP section
+mcp_servers:
+  filesystem:
+    command: "npx"
+    args: ["-y", "fs"]
+"#;
+        fs::write(&config_path, initial_yaml).unwrap();
+
+        let target = AgentTarget {
+            id: "hermes".to_string(),
+            name: "Hermes Agent".to_string(),
+            detected: true,
+            installed: false,
+            config_path: config_path.clone(),
+            format: ConfigFormat::YamlMcpServers,
+        };
+
+        let updated = install_agent(&target, "/path/to/zenohx-mcp", &["--flag".to_string()]).expect("install ok");
+        assert!(updated.installed);
+
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("# Hermes Agent Settings"));
+        assert!(content.contains("# Model choice"));
+        assert!(content.contains("# MCP section"));
+        assert!(content.contains("filesystem:"));
+        assert!(content.contains("zenohx:"));
+        assert!(content.contains("/path/to/zenohx-mcp"));
+        assert!(content.contains("--flag"));
+
+        let uninstalled = uninstall_agent(&updated).expect("uninstall ok");
+        assert!(!uninstalled.installed);
+
+        let post_uninstall = fs::read_to_string(&config_path).unwrap();
+        assert!(post_uninstall.contains("# Hermes Agent Settings"));
+        assert!(post_uninstall.contains("# Model choice"));
+        assert!(post_uninstall.contains("# MCP section"));
+        assert!(post_uninstall.contains("filesystem:"));
+        assert!(!post_uninstall.contains("zenohx:"));
+    }
+
+    #[test]
+    fn test_mutate_hermes_yaml_creates_mcp_servers_block_when_absent() {
+        let temp_dir = TempDir::new();
+        let config_path = temp_dir.path().join("config.yaml");
+        fs::write(&config_path, "model: default\n").unwrap();
+
+        let target = AgentTarget {
+            id: "hermes".to_string(),
+            name: "Hermes Agent".to_string(),
+            detected: true,
+            installed: false,
+            config_path: config_path.clone(),
+            format: ConfigFormat::YamlMcpServers,
+        };
+
+        let updated = install_agent(&target, "/path/to/zenohx-mcp", &[]).expect("install ok");
+        assert!(updated.installed);
+
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("model: default"));
+        assert!(content.contains("mcp_servers:"));
+        assert!(content.contains("zenohx:"));
+    }
 }

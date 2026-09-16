@@ -168,6 +168,8 @@ export const AgentsTab: React.FC<AgentsTabProps> = ({ className = '' }) => {
         return 'JSON (context_servers)';
       case 'TomlMcpServers':
         return 'TOML ([mcp_servers])';
+      case 'YamlMcpServers':
+        return 'YAML (mcp_servers)';
       default:
         return format;
     }

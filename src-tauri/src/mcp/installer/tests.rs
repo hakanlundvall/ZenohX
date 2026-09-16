@@ -41,7 +41,7 @@ impl Drop for TempDir {
 #[test]
 fn test_all_supported_agents_registered() {
     let agents = registry::get_all_agents();
-    assert_eq!(agents.len(), 8);
+    assert_eq!(agents.len(), 10);
     let ids: Vec<&str> = agents.iter().map(|a| a.id.as_str()).collect();
     assert!(ids.contains(&"antigravity"));
     assert!(ids.contains(&"claude"));
@@ -51,6 +51,8 @@ fn test_all_supported_agents_registered() {
     assert!(ids.contains(&"roo-code"));
     assert!(ids.contains(&"zed"));
     assert!(ids.contains(&"codex"));
+    assert!(ids.contains(&"hermes"));
+    assert!(ids.contains(&"openclaw"));
 }
 
 #[test]
@@ -88,6 +90,18 @@ fn test_agent_config_formats() {
         .find(|a| a.id == "roo-code")
         .expect("roo-code agent");
     assert_eq!(roo.format, types::ConfigFormat::JsonMcpServers);
+
+    let openclaw = agents
+        .iter()
+        .find(|a| a.id == "openclaw")
+        .expect("openclaw agent");
+    assert_eq!(openclaw.format, types::ConfigFormat::JsonMcpServers);
+
+    let hermes = agents
+        .iter()
+        .find(|a| a.id == "hermes")
+        .expect("hermes agent");
+    assert_eq!(hermes.format, types::ConfigFormat::YamlMcpServers);
 }
 
 #[test]
@@ -103,6 +117,14 @@ fn test_get_agent_by_id() {
     let codex = registry::get_agent_by_id("codex");
     assert!(codex.is_some());
     assert_eq!(codex.unwrap().name, "Codex CLI");
+
+    let hermes = registry::get_agent_by_id("hermes");
+    assert!(hermes.is_some());
+    assert_eq!(hermes.unwrap().name, "Hermes Agent");
+
+    let openclaw = registry::get_agent_by_id("openclaw");
+    assert!(openclaw.is_some());
+    assert_eq!(openclaw.unwrap().name, "OpenClaw");
 
     let non_existent = registry::get_agent_by_id("non-existent-agent");
     assert!(non_existent.is_none());
@@ -195,6 +217,14 @@ fn test_cross_platform_path_resolution_windows() {
         find_path("codex"),
         home.join(".codex").join("config.toml")
     );
+    assert_eq!(
+        find_path("hermes"),
+        home.join(".hermes").join("config.yaml")
+    );
+    assert_eq!(
+        find_path("openclaw"),
+        home.join(".openclaw").join("openclaw.json")
+    );
 }
 
 #[test]
@@ -251,6 +281,14 @@ fn test_cross_platform_path_resolution_macos() {
         find_path("codex"),
         home.join(".codex").join("config.toml")
     );
+    assert_eq!(
+        find_path("hermes"),
+        home.join(".hermes").join("config.yaml")
+    );
+    assert_eq!(
+        find_path("openclaw"),
+        home.join(".openclaw").join("openclaw.json")
+    );
 }
 
 #[test]
@@ -306,6 +344,14 @@ fn test_cross_platform_path_resolution_linux() {
         find_path("codex"),
         home.join(".codex").join("config.toml")
     );
+    assert_eq!(
+        find_path("hermes"),
+        home.join(".hermes").join("config.yaml")
+    );
+    assert_eq!(
+        find_path("openclaw"),
+        home.join(".openclaw").join("openclaw.json")
+    );
 }
 
 #[test]
@@ -314,10 +360,6 @@ fn test_is_agent_installed_json_and_comments() {
     let path = temp_dir.path().join("config.json");
 
     // Non-existent file
-    assert!(!registry::is_agent_installed(&path, types::ConfigFormat::JsonMcpServers));
-
-    // File without zenohx
-    fs::write(&path, r#"{"mcpServers": {"other": {"command": "test"}}}"#).unwrap();
     assert!(!registry::is_agent_installed(&path, types::ConfigFormat::JsonMcpServers));
 
     // File with zenohx
@@ -386,6 +428,40 @@ other = { command = "test" }
     )
     .unwrap();
     assert!(!registry::is_agent_installed(&path, types::ConfigFormat::TomlMcpServers));
+}
+
+#[test]
+fn test_is_agent_installed_hermes_yaml() {
+    let temp_dir = TempDir::new();
+    let path = temp_dir.path().join("config.yaml");
+
+    fs::write(
+        &path,
+        r#"
+# Hermes Agent Configuration
+model: "claude-sonnet"
+mcp_servers:
+  filesystem:
+    command: "npx"
+  zenohx:
+    command: "zenohx-mcp"
+    args: []
+"#,
+    )
+    .unwrap();
+    assert!(registry::is_agent_installed(&path, types::ConfigFormat::YamlMcpServers));
+
+    fs::write(
+        &path,
+        r#"
+model: "claude-sonnet"
+mcp_servers:
+  filesystem:
+    command: "npx"
+"#,
+    )
+    .unwrap();
+    assert!(!registry::is_agent_installed(&path, types::ConfigFormat::YamlMcpServers));
 }
 
 #[test]

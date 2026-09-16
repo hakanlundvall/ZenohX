@@ -20,6 +20,7 @@ pub enum ConfigFormat {
     JsonMcpServers,
     JsonContextServers,
     TomlMcpServers,
+    YamlMcpServers,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
