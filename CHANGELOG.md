@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+
+## [v0.7.1] - 2026-09-16
+
+### 🚀 Added & Enhanced
+- **mcp:** add zenoh_edit_profile tool and real-time GUI synchronization
+- **mcp:** add zenoh_create_profile tool with live GUI synchronization
+
+---
 ## [v0.7.0] - 2026-09-16
 
 ### 🚀 Added & Enhanced
