@@ -66,8 +66,8 @@ An agent target is marked as:
 2. **Automatic Backup**: If the target file already exists, copies it to `<config_path>.bak`.
 3. **Atomic Write**: Formats the new configuration string and writes it to `<config_path>.tmp`. Calls `std::fs::rename` over the target file to guarantee atomic updates without partial file writes.
 4. **Preservation of Existing Settings**:
-   * For JSON files: reads into `serde_json::Value`. Retains all keys, comments (if JSONC), and existing servers under `mcpServers` or `context_servers`.
-   * For TOML files: parses into `toml::Value::Table`. Retains all existing tables, inserting or updating only the `[mcp_servers.zenohx]` section.
+   * For JSON files: safely parses JSONC/JSON using comment and trailing-comma resilient parser into `serde_json::Value`. Retains all keys, structure, and existing servers under `mcpServers` or `context_servers`. The `.bak` file preserves the exact original unformatted and commented file.
+   * For TOML files: utilizes `toml_edit::DocumentMut` to natively preserve all comments, blank lines, section order, and formatting while inserting or updating only `[mcp_servers.zenohx]`.
 5. **Uninstall Cleanliness**:
    * Removes only the `"zenohx"` key. If the parent container (`mcpServers` or `context_servers`) becomes empty, preserves the empty container to keep the client config valid.
 
