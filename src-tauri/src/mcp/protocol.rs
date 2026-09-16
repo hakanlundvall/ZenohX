@@ -174,11 +174,14 @@ where
 
         match serde_json::from_str::<JsonRpcRequest>(trimmed) {
             Ok(req) => {
+                let is_notification = req.id.is_none();
                 let response = handle_jsonrpc_message(req).await;
-                let mut out_str = serde_json::to_string(&response)?;
-                out_str.push('\n');
-                writer.write_all(out_str.as_bytes()).await?;
-                writer.flush().await?;
+                if !is_notification {
+                    let mut out_str = serde_json::to_string(&response)?;
+                    out_str.push('\n');
+                    writer.write_all(out_str.as_bytes()).await?;
+                    writer.flush().await?;
+                }
             }
             Err(e) => {
                 let response = JsonRpcResponse {

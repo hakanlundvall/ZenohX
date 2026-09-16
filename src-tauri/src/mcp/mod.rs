@@ -22,3 +22,7 @@ pub use protocol::{
     handle_jsonrpc_message, run_mcp_server_stream, run_mcp_stdio_server, JsonRpcError,
     JsonRpcRequest, JsonRpcResponse, McpResource, McpTool,
 };
+pub use tools::{
+    dispatch_mcp_tool, execute_tool_on_state, get_resource_definitions, get_tool_definitions,
+    McpToolResult,
+};

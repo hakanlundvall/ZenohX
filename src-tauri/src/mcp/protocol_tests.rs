@@ -99,7 +99,7 @@ mod tests {
         let resp = handle_jsonrpc_message(req).await;
         let result = resp.result.expect("result present");
         let resources = result["resources"].as_array().expect("resources array");
-        assert!(resources.iter().any(|r| r["uri"] == "zenoh://sessions"));
+        assert!(resources.iter().any(|r| r["uri"] == "zenohx://sessions"));
     }
 
     #[tokio::test]
@@ -109,11 +109,8 @@ mod tests {
             id: Some(json!(4)),
             method: "tools/call".to_string(),
             params: Some(json!({
-                "name": "zenoh_publish",
-                "arguments": {
-                    "key_expr": "demo/test",
-                    "payload": "hello"
-                }
+                "name": "zenoh_get_sessions",
+                "arguments": {}
             })),
         };
         let resp = handle_jsonrpc_message(req).await;
@@ -216,7 +213,18 @@ mod tests {
             .expect("write ping");
         client_writer.flush().await.expect("flush");
 
-        // 2. Send invalid json line
+        // 2. Send notification (no id) -> should NOT produce a response line
+        let notif = json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        });
+        client_writer
+            .write_all(format!("{}\n", notif).as_bytes())
+            .await
+            .expect("write notif");
+        client_writer.flush().await.expect("flush");
+
+        // 3. Send invalid json line
         client_writer
             .write_all(b"not-json\n")
             .await
@@ -234,7 +242,7 @@ mod tests {
         assert_eq!(resp1.id, Some(json!("test-ping")));
         assert!(resp1.error.is_none());
 
-        // Check line 2 (parse error response)
+        // Check line 2 (parse error response - notification produced NO line!)
         let line2 = lines.next_line().await.expect("read line 2").expect("line 2 present");
         let resp2: JsonRpcResponse = serde_json::from_str(&line2).expect("parse line 2");
         assert!(resp2.id.is_none());

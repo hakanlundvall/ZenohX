@@ -73,12 +73,8 @@ pub async fn handle_request_raw(
                         }),
                     );
                 }
-                if let Some(_s) = state {
-                    // Note: Task 4 will implement crate::mcp::tools::execute_tool_on_state
-                    IpcResponse::err(
-                        "live_gui",
-                        format!("Tool '{}' execution not supported in live GUI yet", tool),
-                    )
+                if let Some(s) = state {
+                    crate::mcp::tools::execute_tool_on_state(&tool, args, s, app_handle).await
                 } else {
                     IpcResponse::err("live_gui", "AppState not available")
                 }
@@ -261,16 +257,28 @@ mod tests {
     async fn test_execute_tool_unsupported_with_state() {
         let state = create_test_state();
         let req = IpcRequest::ExecuteTool {
-            tool: "zenoh_scout".to_string(),
+            tool: "non_existent_tool".to_string(),
             args: json!({}),
         };
         let resp = handle_request_raw(req, Some(&state), None).await;
         assert!(!resp.success);
-        assert_eq!(resp.mode, "live_gui");
+        assert_eq!(resp.mode, "headless");
         assert!(resp
             .error
             .unwrap()
-            .contains("Tool 'zenoh_scout' execution not supported in live GUI yet"));
+            .contains("Unknown tool: non_existent_tool"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_tool_supported_with_state() {
+        let state = create_test_state();
+        let req = IpcRequest::ExecuteTool {
+            tool: "zenoh_get_sessions".to_string(),
+            args: json!({}),
+        };
+        let resp = handle_request_raw(req, Some(&state), None).await;
+        assert!(resp.success);
+        assert_eq!(resp.data.as_array().unwrap().len(), 0);
     }
 
     #[cfg(unix)]
