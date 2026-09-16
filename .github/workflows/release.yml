@@ -151,7 +151,7 @@ jobs:
       matrix:
         include:
           # Linux x86_64
-          - platform: ubuntu-24.04
+          - platform: ubuntu-latest
             name: Linux x86_64
             args: ''
             target: 'x86_64-unknown-linux-gnu'
@@ -239,7 +239,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           VITE_POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
           VITE_POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
-          RUSTFLAGS: ${{ matrix.platform == 'ubuntu-24.04' && '-C link-arg=-fuse-ld=mold' || '' }}
+          RUSTFLAGS: ${{ (matrix.platform == 'ubuntu-latest' || matrix.platform == 'ubuntu-24.04') && '-C link-arg=-fuse-ld=mold' || '' }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           tagName: ${{ needs.create-release.outputs.tag_name }}

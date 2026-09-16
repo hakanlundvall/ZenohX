@@ -16,7 +16,7 @@ env:
 jobs:
   frontend:
     name: Frontend Tests & Build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -42,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-24.04, macos-latest, windows-latest]
+        platform: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: Checkout repository
