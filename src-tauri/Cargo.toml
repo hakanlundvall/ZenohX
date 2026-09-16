@@ -1,6 +1,7 @@
 [package]
 name = "zenohx"
 version = "0.6.2"
+default-run = "zenohx"
 description = "ZenohX - Modern, high-performance desktop GUI client for Eclipse Zenoh"
 edition = "2021"
 license = "Apache-2.0"
