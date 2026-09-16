@@ -56,12 +56,14 @@ import { Button } from './components/ui/button';
 import { Badge } from './components/ui/badge';
 import { ResizeHandle } from './components/ui/resize-handle';
 import { useResizable } from './hooks/useResizable';
+import { useMcpListener } from './hooks/useMcpListener';
 import zenohxIcon from './assets/icon.png';
 
 import { formatFriendlyError } from './lib/errorUtils';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<'pubsub' | 'query' | 'traffic' | 'topology' | 'settings'>('pubsub');
+  const { lastAction } = useMcpListener(setActiveTab);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [editingProfile, setEditingProfile] = useState<ConnectionProfile | null>(null);
@@ -706,6 +708,19 @@ export function App() {
             </div>
           </div>
         </aside>
+      )}
+
+      {/* AI Action Notification Toast */}
+      {lastAction && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-lg bg-primary/95 px-4 py-2.5 text-xs text-primary-foreground shadow-lg backdrop-blur animate-in fade-in slide-in-from-bottom-2"
+        >
+          <Sparkles className="h-4 w-4 animate-pulse text-amber-300" />
+          <span className="font-semibold">AI Assistant:</span>
+          <span>{lastAction.details}</span>
+        </div>
       )}
 
       {/* Root Modals: Profile Editor & Scout LAN */}
