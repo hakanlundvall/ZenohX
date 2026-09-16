@@ -19,13 +19,17 @@
  * Enables running `npx zenohx` to download and launch the native ZenohX desktop application.
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const https = require('https');
-const { spawn } = require('child_process');
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import https from 'node:https';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const pkg = require('../package.json');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf-8'));
 const VERSION = pkg.version || '0.1.1';
 const REPO = 'khanhdew/ZenohX';
 
@@ -95,7 +99,80 @@ function downloadFile(url, destPath) {
   });
 }
 
+function findMcpBinary() {
+  const isWin = os.platform() === 'win32';
+  const binName = isWin ? 'zenohx-mcp.exe' : 'zenohx-mcp';
+
+  if (process.env.ZENOHX_MCP_BIN && fs.existsSync(process.env.ZENOHX_MCP_BIN)) {
+    return process.env.ZENOHX_MCP_BIN;
+  }
+
+  const homeBin = path.join(os.homedir(), '.zenohx', 'bin', binName);
+  if (fs.existsSync(homeBin)) {
+    return homeBin;
+  }
+
+  const releaseBin = path.resolve(__dirname, '../src-tauri/target/release', binName);
+  if (fs.existsSync(releaseBin)) {
+    return releaseBin;
+  }
+
+  const debugBin = path.resolve(__dirname, '../src-tauri/target/debug', binName);
+  if (fs.existsSync(debugBin)) {
+    return debugBin;
+  }
+
+  return null;
+}
+
+function handleMcpCommand() {
+  const mcpArgs = process.argv.slice(3);
+  const mcpBin = findMcpBinary();
+
+  if (mcpBin) {
+    const child = spawn(mcpBin, mcpArgs, { stdio: 'inherit' });
+    child.on('exit', (code) => {
+      process.exit(code !== null ? code : 0);
+    });
+    child.on('error', (err) => {
+      console.error(`[ERROR] Failed to run zenohx-mcp: ${err.message}`);
+      process.exit(1);
+    });
+    return;
+  }
+
+  const cargoManifest = path.resolve(__dirname, '../src-tauri/Cargo.toml');
+  if (fs.existsSync(cargoManifest)) {
+    const cargoArgs = [
+      'run',
+      '--manifest-path',
+      cargoManifest,
+      '--bin',
+      'zenohx-mcp',
+      '--',
+      ...mcpArgs,
+    ];
+    const child = spawn('cargo', cargoArgs, { stdio: 'inherit' });
+    child.on('exit', (code) => {
+      process.exit(code !== null ? code : 0);
+    });
+    child.on('error', (err) => {
+      console.error(`[ERROR] Failed to run zenohx-mcp via cargo: ${err.message}`);
+      process.exit(1);
+    });
+    return;
+  }
+
+  console.error('[ERROR] zenohx-mcp binary not found.');
+  console.error('Please ensure ZenohX is installed at ~/.zenohx/bin/zenohx-mcp or build from source.');
+  process.exit(1);
+}
+
 async function main() {
+  if (process.argv[2] === 'mcp') {
+    return handleMcpCommand();
+  }
+
   try {
     const info = getBinaryInfo();
     const cacheDir = getCacheDir();

@@ -12,10 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use zenohx_lib::mcp::installer::handle_cli_args;
 use zenohx_lib::mcp::protocol::run_mcp_stdio_server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 {
+        let handled = handle_cli_args(&args)?;
+        if handled {
+            return Ok(());
+        }
+    }
+
     eprintln!(
         "[zenohx-mcp] Starting ZenohX MCP server on stdio (PID: {})...",
         std::process::id()
