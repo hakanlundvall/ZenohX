@@ -145,6 +145,7 @@ pub fn run() {
             set_mdns_config,
             refresh_mdns_interfaces,
             get_mcp_agents,
+            get_mcp_config_json,
             install_mcp_agent,
             uninstall_mcp_agent,
             install_all_detected_mcp_agents,

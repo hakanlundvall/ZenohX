@@ -23,12 +23,15 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  Search,
+  X,
 } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
 import { SimpleTooltip } from '../../ui/tooltip';
 import {
   getMcpAgents,
+  getMcpConfigJson,
   installMcpAgent,
   uninstallMcpAgent,
   installAllDetectedMcpAgents,
@@ -45,6 +48,8 @@ export const AgentsTab: React.FC<AgentsTabProps> = ({ className = '' }) => {
   const [operatingAgentId, setOperatingAgentId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [isJsonCopied, setIsJsonCopied] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   const loadAgents = useCallback(async () => {
     setIsLoading(true);
@@ -64,12 +69,28 @@ export const AgentsTab: React.FC<AgentsTabProps> = ({ className = '' }) => {
   }, [loadAgents]);
 
   const totalCount = agents.length;
-  const detectedCount = useMemo(() => agents.filter((a) => a.detected).length, [agents]);
-  const installedCount = useMemo(() => agents.filter((a) => a.installed).length, [agents]);
-  const canInstallAll = useMemo(
-    () => agents.some((a) => a.detected && !a.installed),
+  // Display only detected agents (no display the undetected)
+  const detectedAgents = useMemo(
+    () => agents.filter((a) => a.detected || a.installed),
     [agents]
   );
+  const detectedCount = detectedAgents.length;
+  const installedCount = useMemo(() => agents.filter((a) => a.installed).length, [agents]);
+  const canInstallAll = useMemo(
+    () => detectedAgents.some((a) => !a.installed),
+    [detectedAgents]
+  );
+
+  const filteredAgents = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return detectedAgents;
+    return detectedAgents.filter(
+      (a) =>
+        a.name.toLowerCase().includes(q) ||
+        a.id.toLowerCase().includes(q) ||
+        a.config_path.toLowerCase().includes(q)
+    );
+  }, [detectedAgents, searchQuery]);
 
   const handleInstall = async (agentId: string) => {
     setOperatingAgentId(agentId);
@@ -107,6 +128,21 @@ export const AgentsTab: React.FC<AgentsTabProps> = ({ className = '' }) => {
       setErrorMessage(err instanceof Error ? err.message : String(err));
     } finally {
       setOperatingAgentId(null);
+    }
+  };
+
+  const handleCopyJson = async () => {
+    try {
+      const snippet = await getMcpConfigJson();
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(snippet);
+        setIsJsonCopied(true);
+        setTimeout(() => {
+          setIsJsonCopied(false);
+        }, 2000);
+      }
+    } catch (err) {
+      console.error('Failed to copy MCP config JSON:', err);
     }
   };
 
@@ -163,6 +199,23 @@ export const AgentsTab: React.FC<AgentsTabProps> = ({ className = '' }) => {
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             <span>Refresh</span>
+          </Button>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleCopyJson}
+            disabled={isLoading}
+            className="h-8 text-xs gap-1.5"
+            title="Copy standard mcpServers configuration JSON for manual setup"
+          >
+            {isJsonCopied ? (
+              <Check className="w-3.5 h-3.5 text-emerald-500" />
+            ) : (
+              <Copy className="w-3.5 h-3.5" />
+            )}
+            <span>{isJsonCopied ? 'Copied JSON' : 'Copy as JSON'}</span>
           </Button>
 
           <Button
@@ -224,13 +277,37 @@ export const AgentsTab: React.FC<AgentsTabProps> = ({ className = '' }) => {
 
       {/* Agents List Card */}
       <div className="rounded-xl border bg-card shadow-xs overflow-hidden">
-        <div className="p-4 border-b bg-muted/20 flex items-center justify-between">
-          <span className="text-xs font-semibold text-foreground uppercase tracking-wider">
-            Supported AI Targets
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {installedCount} of {totalCount} installed
-          </span>
+        <div className="p-3.5 sm:p-4 border-b bg-muted/20 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-semibold text-foreground uppercase tracking-wider">
+              Supported AI Targets
+            </span>
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-normal">
+              {installedCount} of {detectedCount} installed
+            </Badge>
+          </div>
+
+          {/* Search Input on the right */}
+          <div className="relative w-full sm:w-56">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search detected agents..."
+              className="w-full h-7 pl-8 pr-7 text-xs rounded-md border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-all"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5"
+                title="Clear search"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
         </div>
 
         {isLoading ? (
@@ -238,13 +315,17 @@ export const AgentsTab: React.FC<AgentsTabProps> = ({ className = '' }) => {
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
             <span className="text-xs">Scanning AI agent configurations...</span>
           </div>
-        ) : agents.length === 0 ? (
+        ) : detectedAgents.length === 0 ? (
           <div className="p-8 text-center text-xs text-muted-foreground">
-            No supported AI agents found on this system.
+            No supported AI agents currently detected on this system.
+          </div>
+        ) : filteredAgents.length === 0 ? (
+          <div className="p-8 text-center text-xs text-muted-foreground">
+            No detected agents matching &quot;{searchQuery}&quot;.
           </div>
         ) : (
           <div className="divide-y">
-            {agents.map((agent) => {
+            {filteredAgents.map((agent) => {
               const isOperating = operatingAgentId === agent.id;
               const isCopied = copiedId === agent.id;
 

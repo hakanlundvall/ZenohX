@@ -48,6 +48,21 @@ pub async fn install_all_detected_mcp_agents() -> Result<Vec<AgentTarget>, Strin
     Ok(results)
 }
 
+/// Returns the standard JSON MCP configuration snippet for manual configuration.
+#[tauri::command]
+pub async fn get_mcp_config_json() -> Result<String, String> {
+    let (cmd, args) = crate::mcp::installer::resolve_binary_command();
+    let snippet = serde_json::json!({
+        "mcpServers": {
+            "zenohx": {
+                "command": cmd,
+                "args": args
+            }
+        }
+    });
+    serde_json::to_string_pretty(&snippet).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,5 +189,14 @@ mod tests {
 
         let content_after = fs::read_to_string(&zed_config).unwrap();
         assert!(!content_after.contains("zenohx"));
+    }
+
+    #[tokio::test]
+    async fn test_get_mcp_config_json() {
+        let snippet = get_mcp_config_json().await.expect("get_mcp_config_json ok");
+        let parsed: serde_json::Value = serde_json::from_str(&snippet).expect("valid json");
+        assert!(parsed["mcpServers"]["zenohx"].is_object());
+        assert!(parsed["mcpServers"]["zenohx"]["command"].is_string());
+        assert!(parsed["mcpServers"]["zenohx"]["args"].is_array());
     }
 }

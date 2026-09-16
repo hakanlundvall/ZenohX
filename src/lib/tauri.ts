@@ -622,3 +622,27 @@ export async function installAllDetectedMcpAgents(): Promise<AgentTarget[]> {
   return invoke<AgentTarget[]>('install_all_detected_mcp_agents');
 }
 
+/**
+ * Retrieves the standard JSON MCP configuration snippet for manual configuration.
+ */
+export async function getMcpConfigJson(): Promise<string> {
+  try {
+    return await invoke<string>('get_mcp_config_json');
+  } catch {
+    // Fallback if running in web preview
+    return JSON.stringify(
+      {
+        mcpServers: {
+          zenohx: {
+            command: 'npx',
+            args: ['-y', 'zenohx', 'mcp'],
+          },
+        },
+      },
+      null,
+      2
+    );
+  }
+}
+
+

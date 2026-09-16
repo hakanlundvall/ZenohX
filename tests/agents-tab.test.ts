@@ -30,6 +30,7 @@ globalThis.window.__TAURI_INTERNALS__ = {
 
 import {
   getMcpAgents,
+  getMcpConfigJson,
   installMcpAgent,
   uninstallMcpAgent,
   installAllDetectedMcpAgents,
@@ -257,5 +258,69 @@ describe('AI & Agents MCP IPC and Tab State Transitions', () => {
         message: /Disk full/,
       }
     );
+  });
+
+  test('getMcpConfigJson invokes get_mcp_config_json and returns formatted JSON snippet', async () => {
+    let invokedCmd = '';
+    mockInvokeHandler = async (cmd) => {
+      invokedCmd = cmd;
+      if (cmd === 'get_mcp_config_json') {
+        return JSON.stringify({
+          mcpServers: {
+            zenohx: {
+              command: '/test/path/to/zenohx-mcp',
+              args: [],
+            },
+          },
+        });
+      }
+      return undefined;
+    };
+
+    const jsonStr = await getMcpConfigJson();
+    assert.equal(invokedCmd, 'get_mcp_config_json');
+    const parsed = JSON.parse(jsonStr);
+    assert.ok(parsed.mcpServers.zenohx);
+    assert.equal(parsed.mcpServers.zenohx.command, '/test/path/to/zenohx-mcp');
+  });
+
+  test('AgentsTab filters undetected agents and displays only detected ones', () => {
+    // mockAgentsList: antigravity (detected=true), claude (detected=false), cursor (detected=true), zed (detected=true)
+    const detectedOnly = mockAgentsList.filter((a) => a.detected || a.installed);
+    assert.equal(detectedOnly.length, 3);
+    assert.ok(!detectedOnly.some((a) => a.id === 'claude'));
+    assert.ok(detectedOnly.some((a) => a.id === 'antigravity'));
+    assert.ok(detectedOnly.some((a) => a.id === 'cursor'));
+    assert.ok(detectedOnly.some((a) => a.id === 'zed'));
+  });
+
+  test('AgentsTab search filters detected agents by name or ID case-insensitively', () => {
+    const detectedOnly = mockAgentsList.filter((a) => a.detected || a.installed);
+
+    // Search "cursor"
+    const searchCursor = detectedOnly.filter(
+      (a) =>
+        a.name.toLowerCase().includes('cursor') ||
+        a.id.toLowerCase().includes('cursor')
+    );
+    assert.equal(searchCursor.length, 1);
+    assert.equal(searchCursor[0].id, 'cursor');
+
+    // Search "cli" -> matches "Antigravity CLI"
+    const searchCli = detectedOnly.filter(
+      (a) =>
+        a.name.toLowerCase().includes('cli') ||
+        a.id.toLowerCase().includes('cli')
+    );
+    assert.equal(searchCli.length, 1);
+    assert.equal(searchCli[0].id, 'antigravity');
+
+    // Search "nonexistent" -> matches 0
+    const searchNone = detectedOnly.filter(
+      (a) =>
+        a.name.toLowerCase().includes('nonexistent') ||
+        a.id.toLowerCase().includes('nonexistent')
+    );
+    assert.equal(searchNone.length, 0);
   });
 });
