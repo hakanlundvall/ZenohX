@@ -221,10 +221,18 @@ fn unmutate_json(path: &Path, key: &str) -> Result<(), String> {
         None => return Ok(()),
     };
 
-    if let Some(servers_val) = root_map.get_mut(key) {
+    let removed = if let Some(servers_val) = root_map.get_mut(key) {
         if let Some(servers) = servers_val.as_object_mut() {
-            servers.remove("zenohx");
+            servers.remove("zenohx").is_some()
+        } else {
+            false
         }
+    } else {
+        false
+    };
+
+    if !removed {
+        return Ok(());
     }
 
     let serialized = serde_json::to_string_pretty(&root)
@@ -257,14 +265,11 @@ fn mutate_toml(
         .entry("mcp_servers".to_string())
         .or_insert_with(|| toml::Value::Table(toml::Table::new()));
 
-    let mcp_servers = if let toml::Value::Table(t) = mcp_servers_val {
-        t
-    } else {
-        *mcp_servers_val = toml::Value::Table(toml::Table::new());
-        if let toml::Value::Table(t) = mcp_servers_val {
-            t
-        } else {
-            unreachable!()
+    let mcp_servers = match mcp_servers_val {
+        toml::Value::Table(t) => t,
+        other => {
+            *other = toml::Value::Table(toml::Table::new());
+            other.as_table_mut().unwrap()
         }
     };
 
@@ -308,8 +313,14 @@ fn unmutate_toml(path: &Path) -> Result<(), String> {
         .parse::<toml::Table>()
         .map_err(|e| format!("Failed to parse TOML in {}: {}", path.display(), e))?;
 
-    if let Some(toml::Value::Table(mcp_servers)) = table.get_mut("mcp_servers") {
-        mcp_servers.remove("zenohx");
+    let removed = if let Some(toml::Value::Table(mcp_servers)) = table.get_mut("mcp_servers") {
+        mcp_servers.remove("zenohx").is_some()
+    } else {
+        false
+    };
+
+    if !removed {
+        return Ok(());
     }
 
     let serialized = toml::to_string_pretty(&table)
