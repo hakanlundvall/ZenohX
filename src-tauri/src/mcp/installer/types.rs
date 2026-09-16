@@ -12,18 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod installer;
-pub mod protocol;
-pub mod tools;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
-#[cfg(test)]
-mod protocol_tests;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConfigFormat {
+    JsonMcpServers,
+    JsonContextServers,
+    TomlMcpServers,
+}
 
-pub use protocol::{
-    handle_jsonrpc_message, run_mcp_server_stream, run_mcp_stdio_server, JsonRpcError,
-    JsonRpcRequest, JsonRpcResponse, McpResource, McpTool,
-};
-pub use tools::{
-    dispatch_mcp_tool, execute_tool_on_state, execute_tool_on_state_with_mode,
-    get_resource_definitions, get_tool_definitions, McpToolResult,
-};
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentTarget {
+    pub id: String,
+    pub name: String,
+    pub detected: bool,
+    pub installed: bool,
+    pub config_path: PathBuf,
+    pub format: ConfigFormat,
+}

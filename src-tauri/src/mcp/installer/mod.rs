@@ -12,18 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod installer;
-pub mod protocol;
-pub mod tools;
+pub mod registry;
+pub mod types;
 
 #[cfg(test)]
-mod protocol_tests;
+mod tests;
 
-pub use protocol::{
-    handle_jsonrpc_message, run_mcp_server_stream, run_mcp_stdio_server, JsonRpcError,
-    JsonRpcRequest, JsonRpcResponse, McpResource, McpTool,
-};
-pub use tools::{
-    dispatch_mcp_tool, execute_tool_on_state, execute_tool_on_state_with_mode,
-    get_resource_definitions, get_tool_definitions, McpToolResult,
-};
+pub use registry::{get_agent_by_id, get_all_agents, resolve_binary_command};
+pub use types::{AgentTarget, ConfigFormat};
