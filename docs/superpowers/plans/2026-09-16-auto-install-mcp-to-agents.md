@@ -38,7 +38,7 @@
   - `pub fn get_all_agents() -> Vec<AgentTarget>`
   - `pub fn resolve_binary_command() -> (String, Vec<String>)`
 
-- [ ] **Step 1: Write failing tests for agent detection and path resolution**
+- [x] **Step 1: Write failing tests for agent detection and path resolution**
 
 ```rust
 // src-tauri/src/mcp/installer/tests.rs
@@ -76,12 +76,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml mcp::installer::tests`
 Expected: FAIL with module `installer` not found.
 
-- [ ] **Step 3: Implement Agent Registry and Path Resolution**
+- [x] **Step 3: Implement Agent Registry and Path Resolution**
 
 In `src-tauri/src/mcp/installer/types.rs`:
 ```rust
@@ -112,12 +112,12 @@ Implement path resolution across platforms for each agent and binary resolution 
 In `src-tauri/src/mcp/installer/mod.rs`:
 Expose `types`, `registry`, and tests. Re-export in `src-tauri/src/mcp/mod.rs`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml mcp::installer::tests`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/mcp/installer
@@ -139,7 +139,7 @@ git commit -m "feat(installer): add agent registry and cross-platform path resol
   - `pub fn install_agent(target: &AgentTarget, binary_cmd: &str, binary_args: &[String]) -> Result<AgentTarget, String>`
   - `pub fn uninstall_agent(target: &AgentTarget) -> Result<AgentTarget, String>`
 
-- [ ] **Step 1: Add `toml = "0.8"` to Cargo.toml and write failing tests for JSON & TOML mutation**
+- [x] **Step 1: Add `toml = "0.8"` to Cargo.toml and write failing tests for JSON & TOML mutation**
 
 ```rust
 #[cfg(test)]
@@ -197,24 +197,24 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml mcp::installer::mutator_tests`
 Expected: FAIL with missing `install_agent`.
 
-- [ ] **Step 3: Implement Safe Mutator with Backups and Atomic Writes**
+- [x] **Step 3: Implement Safe Mutator with Backups and Atomic Writes**
 
 Implement `src-tauri/src/mcp/installer/mutator.rs` supporting:
 - `.bak` backup creation.
 - Atomic file write via `.tmp` and `std::fs::rename`.
 - Merging and uninstallation for `JsonMcpServers`, `JsonContextServers`, and `TomlMcpServers`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml mcp::installer::mutator_tests`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/Cargo.toml src-tauri/src/mcp/installer/mutator.rs
@@ -237,16 +237,16 @@ git commit -m "feat(installer): implement safe JSON and TOML configuration mutat
   - Formatted ASCII table for `list-agents`
   - Automated installation output for `install [--all | <agent_id>]` and `uninstall`
 
-- [ ] **Step 1: Write test for CLI argument parsing**
+- [x] **Step 1: Write test for CLI argument parsing**
 
 In `src-tauri/src/mcp/installer/cli.rs`: test flag matching (`list`, `install`, `uninstall`).
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml mcp::installer::cli`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement CLI handlers in `cli.rs` and wire into `zenohx-mcp.rs`**
+- [x] **Step 3: Implement CLI handlers in `cli.rs` and wire into `zenohx-mcp.rs`**
 
 ```rust
 // In zenohx-mcp.rs:
@@ -263,12 +263,12 @@ run_mcp_stdio_server().await?;
 
 Ensure output is clean ASCII with `[OK]`, `[SKIP]`, `[ERROR]`, and zero emojis.
 
-- [ ] **Step 4: Verify building and running CLI subcommands**
+- [x] **Step 4: Verify building and running CLI subcommands**
 
 Run: `cargo run --manifest-path src-tauri/Cargo.toml --bin zenohx-mcp -- list-agents`
 Expected: Outputs formatted table of agents without errors or emojis.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/bin/zenohx-mcp.rs src-tauri/src/mcp/installer/cli.rs bin/zenohx.js
@@ -292,9 +292,9 @@ git commit -m "feat(cli): add install, uninstall, and list-agents CLI commands t
   - Tauri command `uninstall_mcp_agent(agent_id: String) -> Result<AgentTarget, String>`
   - Tauri command `install_all_detected_mcp_agents() -> Result<Vec<AgentTarget>, String>`
 
-- [ ] **Step 1: Write failing test for Tauri command handlers**
+- [x] **Step 1: Write failing test for Tauri command handlers**
 
-- [ ] **Step 2: Implement Tauri commands and register in `generate_handler!`**
+- [x] **Step 2: Implement Tauri commands and register in `generate_handler!`**
 
 In `src-tauri/src/commands/mcp_commands.rs`:
 ```rust
@@ -332,12 +332,12 @@ pub async fn install_all_detected_mcp_agents() -> Result<Vec<AgentTarget>, Strin
 
 Register in `src-tauri/src/lib.rs`.
 
-- [ ] **Step 3: Run `cargo test` and `cargo check`**
+- [x] **Step 3: Run `cargo test` and `cargo check`**
 
 Run: `cargo check --manifest-path src-tauri/Cargo.toml`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src-tauri/src/commands/mcp_commands.rs src-tauri/src/commands/mod.rs src-tauri/src/lib.rs
@@ -361,16 +361,16 @@ git commit -m "feat(tauri): add Tauri commands for MCP agent detection and insta
   - Interactive agent list with copy button for config paths and 1-click Install / Uninstall.
   - Strictly NO EMOJIS.
 
-- [ ] **Step 1: Write test for AgentsTab rendering and status updates**
+- [x] **Step 1: Write test for AgentsTab rendering and status updates**
 
 In `tests/agents-tab.test.ts`: verify state transitions (Detected -> Installed).
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm run test:unit`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement `AgentsTab.tsx` and integrate into `SettingsWorkspace.tsx`**
+- [x] **Step 3: Implement `AgentsTab.tsx` and integrate into `SettingsWorkspace.tsx`**
 
 Implement `src/components/settings/tabs/AgentsTab.tsx` using Tailwind, Radix UI badges, and Lucide React icons (`Bot`, `CheckCircle2`, `AlertCircle`, `Copy`, `Download`, `Trash2`, `RefreshCw`).
 Ensure zero emojis are present in JSX or strings.
@@ -382,12 +382,12 @@ type TabType = 'preferences' | 'network' | 'agents' | 'protobuf' | 'updates' | '
 ```
 Add tab button and render `<AgentsTab />`.
 
-- [ ] **Step 4: Verify TypeScript types and unit tests pass**
+- [x] **Step 4: Verify TypeScript types and unit tests pass**
 
 Run: `npm run test:types && npm run test:unit`
 Expected: PASS with 0 errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/settings/tabs/AgentsTab.tsx src/components/settings/SettingsWorkspace.tsx src/types/zenoh.ts src/lib/tauri.ts tests/
@@ -406,18 +406,18 @@ git commit -m "feat(ui): add AI & Agents tab in ZenohX settings"
 - Consumes: `zenohx-mcp list-agents` and `zenohx-mcp install` CLI.
 - Produces: Automated verification testing CLI outputs and file mutation on isolated test configs.
 
-- [ ] **Step 1: Implement `tests/mcp_installer_e2e_test.mjs`**
+- [x] **Step 1: Implement `tests/mcp_installer_e2e_test.mjs`**
 
 Verify:
 - `zenohx-mcp list-agents` outputs clean table without emojis.
 - `zenohx-mcp install` correctly mutates a temporary test config.
 
-- [ ] **Step 2: Run full test suite**
+- [x] **Step 2: Run full test suite**
 
 Run: `npm run test:all && node tests/mcp_installer_e2e_test.mjs`
 Expected: All suites pass.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/mcp_installer_e2e_test.mjs package.json
