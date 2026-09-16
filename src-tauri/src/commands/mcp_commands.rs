@@ -77,6 +77,8 @@ mod tests {
         temp_dir: PathBuf,
         orig_home: Option<String>,
         orig_xdg: Option<String>,
+        orig_appdata: Option<String>,
+        orig_userprofile: Option<String>,
     }
 
     impl EnvGuard {
@@ -88,15 +90,21 @@ mod tests {
 
             let orig_home = std::env::var("HOME").ok();
             let orig_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+            let orig_appdata = std::env::var("APPDATA").ok();
+            let orig_userprofile = std::env::var("USERPROFILE").ok();
 
             std::env::set_var("HOME", &temp_dir);
+            std::env::set_var("USERPROFILE", &temp_dir);
             std::env::set_var("XDG_CONFIG_HOME", temp_dir.join(".config"));
+            std::env::set_var("APPDATA", temp_dir.join("AppData").join("Roaming"));
 
             Self {
                 _lock: lock,
                 temp_dir,
                 orig_home,
                 orig_xdg,
+                orig_appdata,
+                orig_userprofile,
             }
         }
     }
@@ -113,6 +121,18 @@ mod tests {
                 std::env::set_var("XDG_CONFIG_HOME", orig);
             } else {
                 std::env::remove_var("XDG_CONFIG_HOME");
+            }
+
+            if let Some(ref orig) = self.orig_appdata {
+                std::env::set_var("APPDATA", orig);
+            } else {
+                std::env::remove_var("APPDATA");
+            }
+
+            if let Some(ref orig) = self.orig_userprofile {
+                std::env::set_var("USERPROFILE", orig);
+            } else {
+                std::env::remove_var("USERPROFILE");
             }
 
             let _ = fs::remove_dir_all(&self.temp_dir);
@@ -162,7 +182,11 @@ mod tests {
     #[tokio::test]
     async fn test_install_and_uninstall_detected_agent_lifecycle() {
         let guard = EnvGuard::new("lifecycle");
-        let zed_dir = guard.temp_dir.join(".config").join("zed");
+        let zed_dir = if cfg!(target_os = "windows") {
+            guard.temp_dir.join("AppData").join("Roaming").join("Zed")
+        } else {
+            guard.temp_dir.join(".config").join("zed")
+        };
         fs::create_dir_all(&zed_dir).unwrap();
         let zed_config = zed_dir.join("settings.json");
         fs::write(&zed_config, "{}").unwrap();
