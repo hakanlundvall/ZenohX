@@ -15,6 +15,7 @@
 pub mod commands;
 pub mod db;
 pub mod ipc;
+pub mod mcp;
 pub mod mdns;
 pub mod zenoh;
 
