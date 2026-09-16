@@ -236,6 +236,45 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
             }
         }),
         json!({
+            "name": "zenoh_create_profile",
+            "description": "Creates a new connection profile (node) in ZenohX, saves it to SQLite so it appears in the GUI, and optionally connects it immediately.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Display name of the new node profile (e.g. 'R3', 'Edge Sensor')"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["peer", "client", "router"],
+                        "description": "Zenoh operation mode"
+                    },
+                    "connect_locators": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "List of connect locators (e.g. ['tcp/127.0.0.1:7448'])"
+                    },
+                    "listen_locators": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "List of listen locators (e.g. ['tcp/0.0.0.0:7449'])"
+                    },
+                    "scout_multicast": {
+                        "type": "boolean",
+                        "description": "Enable or disable multicast scouting (default: true)",
+                        "default": true
+                    },
+                    "connect_now": {
+                        "type": "boolean",
+                        "description": "If true, immediately opens an active Zenoh session for this new profile after saving",
+                        "default": false
+                    }
+                },
+                "required": ["name", "mode"]
+            }
+        }),
+        json!({
             "name": "zenoh_edit_profile",
             "description": "Edits an existing connection profile (node) in ZenohX. You can update its name, connect locators, listen locators, or multicast scouting. NOTE: The Zenoh operation mode (peer/client/router) CANNOT be changed.",
             "inputSchema": {
@@ -664,6 +703,115 @@ pub async fn execute_tool_on_state_with_mode(
                 Ok(profiles) => IpcResponse::ok(mode, json!(profiles)),
                 Err(e) => IpcResponse::err(mode, format!("Failed to load profiles: {}", e)),
             }
+        }
+
+        "zenoh_create_profile" => {
+            let name = match args.get("name").and_then(|v| v.as_str()) {
+                Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+                _ => return IpcResponse::err(mode, "Parameter 'name' is required and cannot be empty"),
+            };
+            let mode_str = match args.get("mode").and_then(|v| v.as_str()) {
+                Some(m) if !m.trim().is_empty() => m.trim().to_lowercase(),
+                _ => return IpcResponse::err(mode, "Parameter 'mode' is required ('peer', 'client', or 'router')"),
+            };
+            let connect_locators: Vec<String> = args
+                .get("connect_locators")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let listen_locators: Vec<String> = args
+                .get("listen_locators")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let scout_multicast = args
+                .get("scout_multicast")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let connect_now = args
+                .get("connect_now")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            let now = chrono::Utc::now().timestamp_millis();
+            let profile_id = Uuid::new_v4().to_string();
+
+            let profile = crate::db::models::ConnectionProfile {
+                id: profile_id,
+                name: name.clone(),
+                mode: mode_str.clone(),
+                connect_locators: connect_locators.clone(),
+                listen_locators: listen_locators.clone(),
+                scout_multicast,
+                user_auth: None,
+                tls_config: None,
+                custom_config: None,
+                created_at: now,
+                updated_at: now,
+            };
+
+            if let Err(e) = profile.validate() {
+                return IpcResponse::err(mode, format!("Validation error for profile: {}", e));
+            }
+
+            if let Err(e) = state.db.save_profile(&profile) {
+                return IpcResponse::err(mode, format!("Failed to save new profile: {}", e));
+            }
+
+            let mut session_started = false;
+            let mut new_session_id = None;
+
+            if connect_now {
+                let config = crate::zenoh::types::SessionConfig {
+                    profile_id: Some(profile.id.clone()),
+                    mode: profile.mode.clone(),
+                    connect_locators: profile.connect_locators.clone(),
+                    listen_locators: profile.listen_locators.clone(),
+                    scout_multicast: profile.scout_multicast,
+                    scout_gossip: true,
+                    reconnect_retry: None,
+                    user_auth: None,
+                    tls_config: None,
+                    custom_config: None,
+                };
+                match state.session_manager.connect(config).await {
+                    Ok(sid) => {
+                        session_started = true;
+                        new_session_id = Some(sid.to_string());
+                    }
+                    Err(e) => {
+                        return IpcResponse::err(
+                            mode,
+                            format!("Profile '{}' created, but failed to connect session: {}", name, e),
+                        );
+                    }
+                }
+            }
+
+            if let Some(app) = app_handle {
+                let _ = app.emit(
+                    "zenohx://mcp-action",
+                    json!({
+                        "action": "Create Profile",
+                        "details": format!("Created profile '{}' ({})", profile.name, profile.mode)
+                    }),
+                );
+                let _ = app.emit(
+                    "zenohx://profile-updated",
+                    json!({
+                        "profile": profile,
+                        "session_restarted": false,
+                        "session_id": new_session_id
+                    }),
+                );
+            }
+
+            IpcResponse::ok(
+                mode,
+                json!({
+                    "profile": profile,
+                    "session_started": session_started,
+                    "session_id": new_session_id
+                }),
+            )
         }
 
         "zenoh_edit_profile" => {
@@ -1527,8 +1675,8 @@ mod tests {
         let tools = get_tool_definitions();
         assert_eq!(
             tools.len(),
-            15,
-            "Expected exactly 15 MCP tools, found {}",
+            16,
+            "Expected exactly 16 MCP tools, found {}",
             tools.len()
         );
         let expected_names = [
@@ -1537,6 +1685,7 @@ mod tests {
             "zenoh_disconnect_session",
             "zenoh_get_sessions",
             "zenoh_get_profiles",
+            "zenoh_create_profile",
             "zenoh_edit_profile",
             "zenoh_publish",
             "zenoh_subscribe",
@@ -2188,6 +2337,91 @@ mod tests {
         let sessions = state.session_manager.get_all_sessions().await;
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id.to_string(), new_session_id);
+
+        let _ = execute_tool_on_state("zenoh_disconnect_session", json!({}), &state, None).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_execute_tool_create_profile_success() {
+        let state = create_test_state();
+
+        let resp = execute_tool_on_state(
+            "zenoh_create_profile",
+            json!({
+                "name": "Router R3",
+                "mode": "router",
+                "connect_locators": ["tcp/127.0.0.1:7448"],
+                "listen_locators": ["tcp/0.0.0.0:7449"],
+                "scout_multicast": true
+            }),
+            &state,
+            None,
+        ).await;
+
+        assert!(resp.success);
+        let profile_id = resp.data["profile"]["id"].as_str().unwrap();
+        assert_eq!(resp.data["profile"]["name"], "Router R3");
+        assert_eq!(resp.data["profile"]["mode"], "router");
+        assert_eq!(resp.data["profile"]["connect_locators"], json!(["tcp/127.0.0.1:7448"]));
+        assert_eq!(resp.data["profile"]["listen_locators"], json!(["tcp/0.0.0.0:7449"]));
+
+        // Verify in DB
+        let profile_in_db = state.db.get_profile_by_id(profile_id).expect("db").expect("profile in db");
+        assert_eq!(profile_in_db.name, "Router R3");
+        assert_eq!(profile_in_db.mode, "router");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_execute_tool_create_profile_validation_errors() {
+        let state = create_test_state();
+
+        // Missing name
+        let resp = execute_tool_on_state(
+            "zenoh_create_profile",
+            json!({
+                "mode": "router"
+            }),
+            &state,
+            None,
+        ).await;
+        assert!(!resp.success);
+
+        // Invalid mode
+        let resp = execute_tool_on_state(
+            "zenoh_create_profile",
+            json!({
+                "name": "Bad Mode Node",
+                "mode": "invalid"
+            }),
+            &state,
+            None,
+        ).await;
+        assert!(!resp.success);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_execute_tool_create_profile_connect_now() {
+        let state = create_test_state();
+
+        let resp = execute_tool_on_state(
+            "zenoh_create_profile",
+            json!({
+                "name": "Router Instant",
+                "mode": "router",
+                "listen_locators": ["tcp/0.0.0.0:7455"],
+                "connect_now": true
+            }),
+            &state,
+            None,
+        ).await;
+
+        assert!(resp.success);
+        assert_eq!(resp.data["session_started"], true);
+        let session_id = resp.data["session_id"].as_str().unwrap();
+
+        let sessions = state.session_manager.get_all_sessions().await;
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id.to_string(), session_id);
 
         let _ = execute_tool_on_state("zenoh_disconnect_session", json!({}), &state, None).await;
     }

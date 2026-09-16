@@ -261,6 +261,7 @@ In your client's MCP configuration settings:
 | `zenoh_disconnect_session` | Gracefully close an active Zenoh session. |
 | `zenoh_get_sessions` | List active sessions, their runtime status, and configured endpoints. |
 | `zenoh_get_profiles` | List saved connection profiles (configured nodes) from SQLite. |
+| `zenoh_create_profile` | Create a new connection profile (configured node) in SQLite with real-time UI synchronization. |
 | `zenoh_edit_profile` | Edit a connection profile (name, connect/listen locators, multicast scouting; operation mode is immutable). |
 | `zenoh_publish` | Publish sample payloads to a Zenoh key expression with QoS and encoding parameters. |
 | `zenoh_subscribe` | Subscribe to key expressions and stream incoming samples to the message buffer. |

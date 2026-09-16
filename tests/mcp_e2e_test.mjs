@@ -28,6 +28,7 @@ const EXPECTED_TOOLS = [
   'zenoh_disconnect_session',
   'zenoh_get_sessions',
   'zenoh_get_profiles',
+  'zenoh_create_profile',
   'zenoh_edit_profile',
   'zenoh_publish',
   'zenoh_subscribe',
