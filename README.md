@@ -4,7 +4,7 @@
 
 # ZenohX
 
-**Modern, high-performance desktop GUI client for Eclipse Zenoh (1.x Protocol).**
+**Modern, AI-driven desktop GUI client & Model Context Protocol (MCP) server for Eclipse Zenoh (1.x Protocol).**
 
 [![Release](https://img.shields.io/github/v/release/khanhdew/ZenohX?style=flat-square&color=blue)](https://github.com/khanhdew/ZenohX/releases)
 [![Downloads](https://img.shields.io/github/downloads/khanhdew/ZenohX/total?style=flat-square&color=blue)](https://github.com/khanhdew/ZenohX/releases)
@@ -24,6 +24,10 @@
 
 ## ✨ Features
 
+- **🤖 AI-Driven Automation & Model Context Protocol (MCP):**
+  - **Native MCP Server (`zenohx-mcp`)**: Connect AI assistants and autonomous agents (Claude Desktop, Cursor, Antigravity, VS Code) to Zenoh networks over standard JSON-RPC 2.0.
+  - **Dual Runtime Modes**: Live GUI mode with real-time UI synchronization and bidirectional IPC, or headless CLI mode for server/CI/embedded deployments.
+  - **Comprehensive Agent Toolset**: 16 dedicated tools for topology inspection, LAN discovery, node creation and editing, pub/sub data streaming, and distributed JavaScript RPC handling.
 - **🌐 Interactive Network Topology & Mesh Visualizer:**
   - **Live Graph Rendering**: Visualize connected routers, peers, clients, and discovered nodes with interactive force-directed and radial layouts.
   - **Live Traffic Animation**: Real-time visual pulses along communication links on incoming and outgoing pub/sub samples.

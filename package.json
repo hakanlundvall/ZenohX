@@ -1,7 +1,7 @@
 {
   "name": "zenohx",
   "version": "0.7.1",
-  "description": "ZenohX - Modern, high-performance desktop GUI client for Eclipse Zenoh",
+  "description": "ZenohX - Modern, AI-driven desktop GUI client & MCP server for Eclipse Zenoh",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
