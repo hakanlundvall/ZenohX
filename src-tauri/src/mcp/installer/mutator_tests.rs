@@ -339,4 +339,49 @@ args = []
         let err2 = uninstall_agent_by_id("non-existent-agent");
         assert!(err2.is_err());
     }
+
+    #[test]
+    fn test_mutate_codex_toml_preserves_comments() {
+        let temp_dir = TempDir::new();
+        let config_path = temp_dir.path().join("config.toml");
+        let initial_toml = r#"# Primary model configuration
+[general]
+model = "gpt-4" # The default LLM
+
+# Existing MCP servers section
+[mcp_servers.existing_tool]
+command = "tool"
+"#;
+        fs::write(&config_path, initial_toml).unwrap();
+
+        let target = AgentTarget {
+            id: "codex".to_string(),
+            name: "Codex CLI".to_string(),
+            detected: true,
+            installed: false,
+            config_path: config_path.clone(),
+            format: ConfigFormat::TomlMcpServers,
+        };
+
+        let updated = install_agent(&target, "/path/to/zenohx-mcp", &[]).expect("install ok");
+        assert!(updated.installed);
+
+        let content = fs::read_to_string(&config_path).unwrap();
+        // Assert comments and existing configuration are preserved verbatim
+        assert!(content.contains("# Primary model configuration"));
+        assert!(content.contains("# The default LLM"));
+        assert!(content.contains("# Existing MCP servers section"));
+        assert!(content.contains("zenohx"));
+        assert!(content.contains("existing_tool"));
+
+        // Now uninstall and verify comments are still preserved
+        let uninstalled = uninstall_agent(&updated).expect("uninstall ok");
+        assert!(!uninstalled.installed);
+        let post_uninstall = fs::read_to_string(&config_path).unwrap();
+        assert!(post_uninstall.contains("# Primary model configuration"));
+        assert!(post_uninstall.contains("# The default LLM"));
+        assert!(post_uninstall.contains("# Existing MCP servers section"));
+        assert!(!post_uninstall.contains("zenohx"));
+        assert!(post_uninstall.contains("existing_tool"));
+    }
 }

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::path::{Path, PathBuf};
+use toml_edit::{Array, DocumentMut, Item, Table, Value};
 
 use super::types::{AgentTarget, ConfigFormat};
 
@@ -241,7 +242,7 @@ fn unmutate_json(path: &Path, key: &str) -> Result<(), String> {
     safe_write_config(path, &serialized)
 }
 
-/// Mutates a TOML configuration file by merging [mcp_servers.zenohx].
+/// Mutates a TOML configuration file by merging [mcp_servers.zenohx] while preserving existing comments and formatting.
 fn mutate_toml(
     path: &Path,
     binary_cmd: &str,
@@ -254,49 +255,32 @@ fn mutate_toml(
         String::new()
     };
 
-    let mut table: toml::Table = if raw.trim().is_empty() {
-        toml::Table::new()
+    let mut doc: DocumentMut = if raw.trim().is_empty() {
+        DocumentMut::new()
     } else {
-        raw.parse::<toml::Table>()
+        raw.parse::<DocumentMut>()
             .map_err(|e| format!("Failed to parse TOML in {}: {}", path.display(), e))?
     };
 
-    let mcp_servers_val = table
-        .entry("mcp_servers".to_string())
-        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    if !doc.contains_table("mcp_servers") {
+        doc["mcp_servers"] = Item::Table(Table::new());
+    }
 
-    let mcp_servers = match mcp_servers_val {
-        toml::Value::Table(t) => t,
-        other => {
-            *other = toml::Value::Table(toml::Table::new());
-            other.as_table_mut().unwrap()
-        }
-    };
+    let mut zenohx_table = Table::new();
+    zenohx_table.insert("command", toml_edit::value(binary_cmd));
+    let mut args_array = Array::new();
+    for arg in binary_args {
+        args_array.push(arg.as_str());
+    }
+    zenohx_table.insert("args", Item::Value(Value::Array(args_array)));
 
-    let mut zenohx_entry = toml::Table::new();
-    zenohx_entry.insert(
-        "command".to_string(),
-        toml::Value::String(binary_cmd.to_string()),
-    );
-    zenohx_entry.insert(
-        "args".to_string(),
-        toml::Value::Array(
-            binary_args
-                .iter()
-                .map(|a| toml::Value::String(a.clone()))
-                .collect(),
-        ),
-    );
+    doc["mcp_servers"]["zenohx"] = Item::Table(zenohx_table);
 
-    mcp_servers.insert("zenohx".to_string(), toml::Value::Table(zenohx_entry));
-
-    let serialized = toml::to_string_pretty(&table)
-        .map_err(|e| format!("Failed to serialize TOML: {}", e))?;
-
+    let serialized = doc.to_string();
     safe_write_config(path, &serialized)
 }
 
-/// Removes the zenohx entry from a TOML configuration file under [mcp_servers].
+/// Removes the zenohx entry from a TOML configuration file under [mcp_servers] while preserving comments.
 fn unmutate_toml(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Ok(());
@@ -309,11 +293,11 @@ fn unmutate_toml(path: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    let mut table: toml::Table = raw
-        .parse::<toml::Table>()
+    let mut doc = raw
+        .parse::<DocumentMut>()
         .map_err(|e| format!("Failed to parse TOML in {}: {}", path.display(), e))?;
 
-    let removed = if let Some(toml::Value::Table(mcp_servers)) = table.get_mut("mcp_servers") {
+    let removed = if let Some(mcp_servers) = doc.get_mut("mcp_servers").and_then(|i| i.as_table_like_mut()) {
         mcp_servers.remove("zenohx").is_some()
     } else {
         false
@@ -323,9 +307,7 @@ fn unmutate_toml(path: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    let serialized = toml::to_string_pretty(&table)
-        .map_err(|e| format!("Failed to serialize TOML: {}", e))?;
-
+    let serialized = doc.to_string();
     safe_write_config(path, &serialized)
 }
 
