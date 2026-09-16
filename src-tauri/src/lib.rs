@@ -144,6 +144,10 @@ pub fn run() {
             get_mdns_status,
             set_mdns_config,
             refresh_mdns_interfaces,
+            get_mcp_agents,
+            install_mcp_agent,
+            uninstall_mcp_agent,
+            install_all_detected_mcp_agents,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

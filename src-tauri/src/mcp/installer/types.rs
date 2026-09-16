@@ -12,17 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod mcp_commands;
-pub mod mdns_commands;
-pub mod profile_commands;
-pub mod pubsub_commands;
-pub mod query_commands;
-pub mod session_commands;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
-pub use mcp_commands::*;
-pub use mdns_commands::*;
-pub use profile_commands::*;
-pub use pubsub_commands::*;
-pub use query_commands::*;
-pub use session_commands::*;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConfigFormat {
+    JsonMcpServers,
+    JsonContextServers,
+    TomlMcpServers,
+}
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentTarget {
+    pub id: String,
+    pub name: String,
+    pub detected: bool,
+    pub installed: bool,
+    pub config_path: PathBuf,
+    pub format: ConfigFormat,
+}

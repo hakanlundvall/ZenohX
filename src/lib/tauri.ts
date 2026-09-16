@@ -43,6 +43,7 @@ import type {
   StreamGeneratorConfig,
   NodeConfigurationResult,
   MdnsStatus,
+  AgentTarget,
 } from '../types/zenoh';
 import type { AdminSpaceEntry } from '../types/topology';
 
@@ -587,5 +588,37 @@ export async function setMdnsConfig(
  */
 export async function refreshMdnsInterfaces(): Promise<MdnsStatus> {
   return invoke<MdnsStatus>('refresh_mdns_interfaces');
+}
+
+// ============================================================================
+// AI & Agents MCP Installer IPC Commands
+// ============================================================================
+
+/**
+ * Retrieves detection and installation status for all supported MCP agents.
+ */
+export async function getMcpAgents(): Promise<AgentTarget[]> {
+  return invoke<AgentTarget[]>('get_mcp_agents');
+}
+
+/**
+ * Installs ZenohX MCP server configuration into the specified agent.
+ */
+export async function installMcpAgent(agentId: string): Promise<AgentTarget> {
+  return invoke<AgentTarget>('install_mcp_agent', { agentId });
+}
+
+/**
+ * Uninstalls ZenohX MCP server configuration from the specified agent.
+ */
+export async function uninstallMcpAgent(agentId: string): Promise<AgentTarget> {
+  return invoke<AgentTarget>('uninstall_mcp_agent', { agentId });
+}
+
+/**
+ * Installs ZenohX MCP server configuration into all detected agents that are not yet installed.
+ */
+export async function installAllDetectedMcpAgents(): Promise<AgentTarget[]> {
+  return invoke<AgentTarget[]>('install_all_detected_mcp_agents');
 }
 
