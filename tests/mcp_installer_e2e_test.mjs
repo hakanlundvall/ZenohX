@@ -22,8 +22,12 @@ import assert from 'node:assert/strict';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
+const isWindows = process.platform === 'win32';
 const binScript = path.resolve(rootDir, 'bin/zenohx.js');
-const debugBin = path.resolve(rootDir, 'src-tauri/target/debug/zenohx-mcp');
+const debugBin = path.resolve(
+  rootDir,
+  `src-tauri/target/debug/zenohx-mcp${isWindows ? '.exe' : ''}`
+);
 
 const SUPPORTED_AGENT_IDS = [
   'antigravity',
@@ -224,7 +228,9 @@ function testIsolatedAgentLifecycle() {
     );
 
     // Setup Zed config (JSON context_servers)
-    const zedDir = path.join(tmpDir, '.config', 'zed');
+    const zedDir = isWindows
+      ? path.join(tmpDir, 'AppData', 'Roaming', 'Zed')
+      : path.join(tmpDir, '.config', 'zed');
     fs.mkdirSync(zedDir, { recursive: true });
     const zedConfigPath = path.join(zedDir, 'settings.json');
     const zedBackupPath = path.join(zedDir, 'settings.json.bak');
