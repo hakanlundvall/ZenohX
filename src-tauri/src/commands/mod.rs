@@ -12,12 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod mcp_commands;
 pub mod mdns_commands;
 pub mod profile_commands;
 pub mod pubsub_commands;
 pub mod query_commands;
 pub mod session_commands;
 
+pub use mcp_commands::*;
 pub use mdns_commands::*;
 pub use profile_commands::*;
 pub use pubsub_commands::*;
