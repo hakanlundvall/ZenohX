@@ -11,14 +11,19 @@ pub use types::{IpcRequest, IpcResponse};
 use std::path::PathBuf;
 
 pub fn get_socket_path() -> PathBuf {
-    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-        if !runtime_dir.trim().is_empty() {
-            return PathBuf::from(runtime_dir).join("zenohx.sock");
-        }
+    #[cfg(windows)]
+    {
+        PathBuf::from(r"\\.\pipe\zenohx-ipc")
     }
+    #[cfg(not(windows))]
+    {
+        if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+            if !runtime_dir.trim().is_empty() {
+                return PathBuf::from(runtime_dir).join("zenohx.sock");
+            }
+        }
 
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".zenohx").join("zenohx.sock")
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(home).join(".zenohx").join("zenohx.sock")
+    }
 }

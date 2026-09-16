@@ -78,7 +78,14 @@ mod tests {
     #[test]
     fn test_get_socket_path() {
         let path = get_socket_path();
-        assert!(path.ends_with("zenohx.sock"));
+        #[cfg(windows)]
+        {
+            assert_eq!(path.to_str().unwrap(), r"\\.\pipe\zenohx-ipc");
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(path.ends_with("zenohx.sock"));
+        }
     }
 
     #[cfg(unix)]
