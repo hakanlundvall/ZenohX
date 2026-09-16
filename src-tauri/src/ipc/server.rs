@@ -14,11 +14,14 @@
 
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use crate::AppState;
 use super::get_socket_path;
 use super::types::{IpcRequest, IpcResponse};
+
+/// Maximum allowed frame size for IPC stream requests (16 MB).
+pub const MAX_FRAME_SIZE: u64 = 16 * 1024 * 1024; // 16 MB
 
 /// Dispatches raw IPC requests received over the Unix socket or named pipe.
 pub async fn handle_request_raw(
@@ -93,10 +96,33 @@ pub async fn handle_connection(
     let (reader, mut writer) = stream.into_split();
     let mut buf_reader = BufReader::new(reader);
     let mut line = String::new();
-    while let Ok(bytes) = buf_reader.read_line(&mut line).await {
-        if bytes == 0 {
+    loop {
+        line.clear();
+        let bytes = match (&mut buf_reader).take(MAX_FRAME_SIZE + 1).read_line(&mut line).await {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("[ZenohX IPC] Read error: {}", e);
+                break;
+            }
+        };
+
+        if bytes > MAX_FRAME_SIZE as usize {
+            let resp = IpcResponse::err(
+                "live_gui",
+                format!(
+                    "Request frame exceeded maximum allowed size of {} bytes",
+                    MAX_FRAME_SIZE
+                ),
+            );
+            if let Ok(mut out) = serde_json::to_string(&resp) {
+                out.push('\n');
+                let _ = writer.write_all(out.as_bytes()).await;
+                let _ = writer.flush().await;
+            }
             break;
         }
+
         let resp = match serde_json::from_str::<IpcRequest>(&line) {
             Ok(req) => handle_request_raw(req, state.as_deref(), app_handle.as_ref()).await,
             Err(e) => IpcResponse::err("live_gui", format!("Invalid JSON request: {}", e)),
@@ -106,7 +132,9 @@ pub async fn handle_connection(
             let _ = writer.write_all(out.as_bytes()).await;
             let _ = writer.flush().await;
         }
-        line.clear();
+        if line.capacity() > 64 * 1024 {
+            line = String::new();
+        }
     }
 }
 
@@ -336,6 +364,52 @@ mod tests {
         let _ = shutdown_tx.send(());
         let _ = server_task.await;
         let _ = std::fs::remove_file(&socket_path);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_handle_connection_rejects_oversized_frame() {
+        let (client_stream, server_stream) =
+            tokio::net::UnixStream::pair().expect("unix stream pair");
+
+        let server_handle = tokio::spawn(async move {
+            handle_connection(server_stream, None, None).await;
+        });
+
+        let (mut client_reader, mut client_writer) = client_stream.into_split();
+
+        // Stream 17 chunks of 1 MB without newline to exceed MAX_FRAME_SIZE (16 MB)
+        let write_handle = tokio::spawn(async move {
+            let chunk = vec![b'a'; 1024 * 1024];
+            for _ in 0..17 {
+                if client_writer.write_all(&chunk).await.is_err() {
+                    break;
+                }
+            }
+            let _ = client_writer.write_all(b"\n").await;
+            let _ = client_writer.flush().await;
+        });
+
+        let mut buf_reader = BufReader::new(&mut client_reader);
+        let mut response_line = String::new();
+        buf_reader
+            .read_line(&mut response_line)
+            .await
+            .expect("read response");
+
+        let resp: IpcResponse =
+            serde_json::from_str(&response_line).expect("parse error response");
+        assert!(!resp.success);
+        assert_eq!(resp.mode, "live_gui");
+        assert!(
+            resp.error
+                .expect("error message")
+                .contains("Request frame exceeded maximum allowed size"),
+            "Expected frame size limit error"
+        );
+
+        let _ = write_handle.await;
+        let _ = server_handle.await;
     }
 }
 

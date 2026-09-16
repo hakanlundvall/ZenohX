@@ -14,7 +14,10 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+/// Maximum allowed frame size for MCP stream requests (16 MB).
+pub const MAX_FRAME_SIZE: u64 = 16 * 1024 * 1024; // 16 MB
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
@@ -161,14 +164,37 @@ where
     let mut buf_reader = BufReader::new(reader);
     let mut line = String::new();
 
-    while let Ok(bytes_read) = buf_reader.read_line(&mut line).await {
-        if bytes_read == 0 {
+    loop {
+        line.clear();
+        let bytes_read = match (&mut buf_reader).take(MAX_FRAME_SIZE + 1).read_line(&mut line).await {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) => return Err(Box::new(e)),
+        };
+
+        if bytes_read > MAX_FRAME_SIZE as usize {
+            let response = JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id: None,
+                result: None,
+                error: Some(JsonRpcError {
+                    code: -32700,
+                    message: format!(
+                        "Request frame exceeded maximum allowed size of {} bytes",
+                        MAX_FRAME_SIZE
+                    ),
+                    data: None,
+                }),
+            };
+            let mut out_str = serde_json::to_string(&response)?;
+            out_str.push('\n');
+            writer.write_all(out_str.as_bytes()).await?;
+            writer.flush().await?;
             break;
         }
 
         let trimmed = line.trim();
         if trimmed.is_empty() {
-            line.clear();
             continue;
         }
 
@@ -200,7 +226,9 @@ where
                 writer.flush().await?;
             }
         }
-        line.clear();
+        if line.capacity() > 64 * 1024 {
+            line = String::new();
+        }
     }
     Ok(())
 }

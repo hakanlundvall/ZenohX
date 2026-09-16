@@ -254,4 +254,47 @@ mod tests {
         let res = server_handle.await.expect("join handle");
         assert!(res.is_ok());
     }
+
+    #[tokio::test]
+    async fn test_run_mcp_server_stream_rejects_oversized_frame() {
+        let (client_reader, server_writer) = tokio::io::duplex(64 * 1024);
+        let (server_reader, mut client_writer) = tokio::io::duplex(64 * 1024);
+
+        let server_handle = tokio::spawn(async move {
+            run_mcp_server_stream(server_reader, server_writer).await
+        });
+
+        // Stream 17 chunks of 1 MB without newline to exceed MAX_FRAME_SIZE (16 MB)
+        let write_handle = tokio::spawn(async move {
+            let chunk = vec![b'a'; 1024 * 1024];
+            for _ in 0..17 {
+                if client_writer.write_all(&chunk).await.is_err() {
+                    break;
+                }
+            }
+            let _ = client_writer.write_all(b"\n").await;
+            let _ = client_writer.flush().await;
+        });
+
+        let mut lines = tokio::io::BufReader::new(client_reader).lines();
+        let line1 = lines
+            .next_line()
+            .await
+            .expect("read line")
+            .expect("line present");
+        let resp: JsonRpcResponse =
+            serde_json::from_str(&line1).expect("parse error response");
+        assert!(resp.error.is_some());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32700);
+        assert!(
+            err.message
+                .contains("Request frame exceeded maximum allowed size"),
+            "Expected frame size limit error message"
+        );
+
+        let _ = write_handle.await;
+        let res = server_handle.await.expect("join handle");
+        assert!(res.is_ok());
+    }
 }

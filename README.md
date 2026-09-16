@@ -12,7 +12,7 @@
 [![Platform](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat-square)](https://github.com/khanhdew/ZenohX/releases)
 [![Tauri](https://img.shields.io/badge/built%20with-Tauri%20v2-24C8D8?style=flat-square&logo=tauri)](https://tauri.app)
 
-[**Download ZenohX**](https://github.com/khanhdew/ZenohX/releases/latest) • [**Features**](#features) • [**Installation**](#installation) • [**Building from Source**](#building-from-source) • [**Contributing**](#contributing)
+[**Download ZenohX**](https://github.com/khanhdew/ZenohX/releases/latest) • [**Features**](#features) • [**Installation**](#installation) • [**Building from Source**](#building-from-source) • [**AI Control (MCP)**](#-ai-control-via-model-context-protocol-mcp) • [**Contributing**](#contributing)
 
 <br/>
 
@@ -149,6 +149,123 @@ npm run build
 npm run tauri build
 ```
 Binaries will be output to `src-tauri/target/release/bundle/`.
+
+---
+
+## 🤖 AI Control via Model Context Protocol (MCP)
+
+ZenohX includes a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server (`zenohx-mcp`) communicating over standard input/output (`stdio`) via JSON-RPC 2.0. This allows AI assistants and agentic coding workflows (such as Claude Desktop, Cursor, and Antigravity) to programmatically inspect network topologies, scout Zenoh peers, publish and subscribe to data streams, and query distributed storage.
+
+### Operating Modes
+
+The MCP server operates seamlessly in two runtime modes:
+
+1. **Live GUI Mode (Connected to Desktop App)**:
+   - When the ZenohX desktop application is open, `zenohx-mcp` automatically detects and connects to its local IPC Unix domain socket (`/tmp/zenohx-ipc.sock` on Unix/Linux/macOS).
+   - Tool executions (e.g. switching workspaces, publishing messages, inspecting nodes) execute directly against the live GUI state and trigger real-time AI action notifications in the ZenohX desktop interface.
+2. **Headless Mode (Standalone Fallback)**:
+   - If the ZenohX desktop application is not running, `zenohx-mcp` automatically falls back to an independent headless Zenoh session runtime and local SQLite storage engine.
+   - All Zenoh networking tools (scouting, pub/sub, queries, session management) remain fully functional without requiring the graphical interface.
+
+---
+
+### Client Configuration
+
+You can configure your MCP client using either the compiled release binary or via npm script.
+
+> [!IMPORTANT]
+> **Always use `--silent` with npm:**
+> When configuring MCP clients via `npm run`, you **must** pass `--silent` (e.g., `npm run --silent mcp`). Without `--silent`, npm writes startup banners and lifecycle logs to `stdout`, which corrupts the stdio JSON-RPC protocol stream and breaks MCP client communication.
+
+#### 1. Claude Desktop
+
+Add the `zenohx` server configuration to your `claude_desktop_config.json`:
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+**Using compiled binary (Recommended for lowest latency):**
+```json
+{
+  "mcpServers": {
+    "zenohx": {
+      "command": "/absolute/path/to/ZenohX/src-tauri/target/release/zenohx-mcp"
+    }
+  }
+}
+```
+
+**Using npm:**
+```json
+{
+  "mcpServers": {
+    "zenohx": {
+      "command": "npm",
+      "args": ["run", "--silent", "mcp"],
+      "cwd": "/absolute/path/to/ZenohX"
+    }
+  }
+}
+```
+
+#### 2. Cursor IDE
+
+In Cursor Settings &rarr; **Features** &rarr; **MCP** (or `.cursor/mcp.json` in your workspace):
+
+```json
+{
+  "mcpServers": {
+    "zenohx": {
+      "command": "/absolute/path/to/ZenohX/src-tauri/target/release/zenohx-mcp"
+    }
+  }
+}
+```
+
+#### 3. Antigravity & Generic MCP Clients
+
+In your client's MCP configuration settings:
+
+```json
+{
+  "mcpServers": {
+    "zenohx": {
+      "command": "npm",
+      "args": ["run", "--silent", "mcp"],
+      "cwd": "/absolute/path/to/ZenohX"
+    }
+  }
+}
+```
+
+---
+
+### Available MCP Tools & Resources
+
+#### Tools
+| Tool | Description |
+| :--- | :--- |
+| `zenoh_scout` | Scout for active Zenoh peers and routers across the local network via multicast or gossip. |
+| `zenoh_connect_session` | Establish a new Zenoh session with specific mode (Peer, Client, Router) and connect/listen locators. |
+| `zenoh_disconnect_session` | Gracefully close an active Zenoh session. |
+| `zenoh_get_sessions` | List active sessions, their runtime status, and configured endpoints. |
+| `zenoh_publish` | Publish sample payloads to a Zenoh key expression with QoS and encoding parameters. |
+| `zenoh_subscribe` | Subscribe to key expressions and stream incoming samples to the message buffer. |
+| `zenoh_unsubscribe` | Cancel an active key expression subscription. |
+| `zenoh_get_messages` | Retrieve recent ingested messages, optionally filtered by key expression. |
+| `zenoh_query` | Query distributed Zenoh queryables with consolidation and timeout settings. |
+| `zenoh_declare_queryable` | Declare a queryable handler for distributed RPC and data serving. |
+| `zenoh_inspect_topology` | Retrieve the active network topology graph, nodes, links, and bound locators. |
+| `zenohx_gui_switch_workspace` | *(Live GUI only)* Switch the active workspace tab in the running ZenohX application. |
+| `zenohx_gui_get_state` | Retrieve the current GUI runtime connection status and active workspace tab. |
+
+#### Resources
+| Resource URI | Description |
+| :--- | :--- |
+| `zenohx://sessions` | JSON snapshot of all currently open Zenoh sessions and configurations. |
+| `zenohx://profiles` | Saved connection profiles from the SQLite database. |
+| `zenohx://messages/recent` | Recent ingested message log stream. |
+| `zenohx://topology` | Live topology graph representing nodes and transport links. |
 
 ---
 
