@@ -1344,17 +1344,29 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_dispatch_mcp_tool_headless_fallback() {
         let _lock = TEST_DISPATCH_MUTEX.lock().await;
-        // Since no IPC server is running on default socket in unit tests,
+        let prev_sock = std::env::var("ZENOHX_IPC_SOCKET").ok();
+        let non_existent = std::env::temp_dir().join(format!("zenohx-nonexistent-{}.sock", Uuid::new_v4()));
+        std::env::set_var("ZENOHX_IPC_SOCKET", &non_existent);
+
+        // Since no IPC server is running on the specified socket,
         // dispatch_mcp_tool should automatically fall back to headless.
         let resp = dispatch_mcp_tool("zenoh_get_sessions", json!({})).await;
-        assert!(!resp.is_error);
-        assert!(resp.text.contains("[Mode: Headless (GUI not running)]"));
 
         // GUI-specific tools should cleanly fail in headless mode
         let gui_resp = dispatch_mcp_tool(
             "zenohx_gui_switch_workspace",
             json!({ "workspace": "topology" }),
         ).await;
+
+        if let Some(prev) = prev_sock {
+            std::env::set_var("ZENOHX_IPC_SOCKET", prev);
+        } else {
+            std::env::remove_var("ZENOHX_IPC_SOCKET");
+        }
+
+        assert!(!resp.is_error);
+        assert!(resp.text.contains("[Mode: Headless (GUI not running)]"));
+
         assert!(gui_resp.is_error);
         assert!(gui_resp.text.contains("Desktop GUI is not running; cannot switch workspace"));
     }
@@ -1493,19 +1505,19 @@ mod tests {
             }
         });
 
-        // Set XDG_RUNTIME_DIR to point to our test socket
-        let prev_xdg = std::env::var("XDG_RUNTIME_DIR").ok();
-        std::env::set_var("XDG_RUNTIME_DIR", &temp_dir);
+        // Set ZENOHX_IPC_SOCKET to point directly to our test socket
+        let prev_sock = std::env::var("ZENOHX_IPC_SOCKET").ok();
+        std::env::set_var("ZENOHX_IPC_SOCKET", &socket_path);
 
         let resp = dispatch_mcp_tool(
             "zenohx_gui_switch_workspace",
             json!({ "workspace": "query" }),
         ).await;
 
-        if let Some(prev) = prev_xdg {
-            std::env::set_var("XDG_RUNTIME_DIR", prev);
+        if let Some(prev) = prev_sock {
+            std::env::set_var("ZENOHX_IPC_SOCKET", prev);
         } else {
-            std::env::remove_var("XDG_RUNTIME_DIR");
+            std::env::remove_var("ZENOHX_IPC_SOCKET");
         }
 
         assert!(!resp.is_error);

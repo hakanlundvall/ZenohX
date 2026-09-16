@@ -11,6 +11,12 @@ pub use types::{IpcRequest, IpcResponse};
 use std::path::PathBuf;
 
 pub fn get_socket_path() -> PathBuf {
+    if let Ok(custom) = std::env::var("ZENOHX_IPC_SOCKET") {
+        if !custom.trim().is_empty() {
+            return PathBuf::from(custom);
+        }
+    }
+
     #[cfg(windows)]
     {
         PathBuf::from(r"\\.\pipe\zenohx-ipc")

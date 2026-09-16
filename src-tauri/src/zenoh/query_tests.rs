@@ -20,10 +20,17 @@ mod tests {
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
+    fn test_peer_config() -> SessionConfig {
+        let mut config = SessionConfig::default_peer();
+        config.scout_multicast = false;
+        config.scout_gossip = false;
+        config
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_zenoh_query_and_queryable_roundtrip() {
         let manager = SessionManager::new();
-        let session_id = manager.connect(SessionConfig::default_peer()).await.unwrap();
+        let session_id = manager.connect(test_peer_config()).await.unwrap();
         let q_id = Uuid::new_v4();
         let test_key = format!("roundtrip/rpc/{}", Uuid::new_v4().simple());
 
@@ -55,30 +62,35 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_zenoh_query_with_custom_encoding() {
         let manager = SessionManager::new();
-        let session_id = manager.connect(SessionConfig::default_peer()).await.unwrap();
+        let session_id = manager.connect(test_peer_config()).await.unwrap();
         let q_id = Uuid::new_v4();
+        let key_expr = format!("sensor/telemetry/{}", Uuid::new_v4().simple());
 
+        let reply_key = key_expr.clone();
         manager
-            .declare_queryable(&session_id, q_id, "sensor/telemetry", |query| async move {
-                query
-                    .reply_with_encoding(
-                        "sensor/telemetry",
-                        b"temperature=24.5".to_vec(),
-                        "text/plain",
-                    )
-                    .await
-                    .unwrap();
+            .declare_queryable(&session_id, q_id, &key_expr, move |query| {
+                let k = reply_key.clone();
+                async move {
+                    query
+                        .reply_with_encoding(
+                            &k,
+                            b"temperature=24.5".to_vec(),
+                            "text/plain",
+                        )
+                        .await
+                        .unwrap();
+                }
             })
             .await
             .unwrap();
 
         let replies = manager
-            .query_get(&session_id, "sensor/telemetry", "best_matching", 2000)
+            .query_get(&session_id, &key_expr, "best_matching", 2000)
             .await
             .unwrap();
 
         assert_eq!(replies.len(), 1);
-        assert_eq!(replies[0].key_expr, "sensor/telemetry");
+        assert_eq!(replies[0].key_expr, key_expr);
         assert_eq!(replies[0].payload, b"temperature=24.5");
         assert_eq!(replies[0].encoding, "text/plain");
         assert!(!replies[0].is_err);
@@ -89,9 +101,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_zenoh_query_error_reply() {
         let manager = SessionManager::new();
-        let session_id = manager.connect(SessionConfig::default_peer()).await.unwrap();
+        let session_id = manager.connect(test_peer_config()).await.unwrap();
         let q_id = Uuid::new_v4();
-        let key_expr = format!("service/error_test/{}", Uuid::new_v4());
+        let key_expr = format!("service/error_test/{}", Uuid::new_v4().simple());
 
         manager
             .declare_queryable(&session_id, q_id, &key_expr, |query| async move {
@@ -121,23 +133,28 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_zenoh_query_delete_reply() {
         let manager = SessionManager::new();
-        let session_id = manager.connect(SessionConfig::default_peer()).await.unwrap();
+        let session_id = manager.connect(test_peer_config()).await.unwrap();
         let q_id = Uuid::new_v4();
+        let key_expr = format!("cache/item/{}", Uuid::new_v4().simple());
 
+        let reply_key = key_expr.clone();
         manager
-            .declare_queryable(&session_id, q_id, "cache/item", |query| async move {
-                query.reply_del("cache/item").await.unwrap();
+            .declare_queryable(&session_id, q_id, &key_expr, move |query| {
+                let k = reply_key.clone();
+                async move {
+                    query.reply_del(&k).await.unwrap();
+                }
             })
             .await
             .unwrap();
 
         let replies = manager
-            .query_get(&session_id, "cache/item", "all", 2000)
+            .query_get(&session_id, &key_expr, "all", 2000)
             .await
             .unwrap();
 
         assert_eq!(replies.len(), 1);
-        assert_eq!(replies[0].key_expr, "cache/item");
+        assert_eq!(replies[0].key_expr, key_expr);
         assert!(!replies[0].is_err);
 
         manager.disconnect(&session_id).await.unwrap();
@@ -199,14 +216,17 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_zenoh_query_routed_and_reply_token() {
         let manager = SessionManager::new();
-        let session_id = manager.connect(SessionConfig::default_peer()).await.unwrap();
+        let session_id = manager.connect(test_peer_config()).await.unwrap();
         let q_id = Uuid::new_v4();
+        let prefix = format!("ipc_rpc_{}", Uuid::new_v4().simple());
+        let wildcard = format!("{prefix}/ipc/rpc/**");
+        let query_key = format!("{prefix}/ipc/rpc/calculate");
 
         let (tx, mut rx) = mpsc::channel::<InboundQuery>(10);
 
         // Declare routed queryable (emulating Tauri IPC event emission)
         manager
-            .declare_queryable_routed(&session_id, q_id, "ipc/rpc/**", move |inbound| {
+            .declare_queryable_routed(&session_id, q_id, &wildcard, move |inbound| {
                 let _ = tx.try_send(inbound);
             })
             .await
@@ -214,9 +234,10 @@ mod tests {
 
         // Spawn a background querier task
         let mgr_clone = manager.clone();
+        let query_selector = format!("{query_key}?x=10&y=20");
         let query_handle = tokio::spawn(async move {
             mgr_clone
-                .query_get(&session_id, "ipc/rpc/calculate?x=10&y=20", "all", 3000)
+                .query_get(&session_id, &query_selector, "all", 3000)
                 .await
         });
 
@@ -226,14 +247,14 @@ mod tests {
             .expect("timeout waiting for inbound query")
             .expect("channel closed");
 
-        assert_eq!(inbound.key_expr, "ipc/rpc/calculate");
+        assert_eq!(inbound.key_expr, query_key);
         assert_eq!(inbound.parameters, "x=10&y=20");
 
         // Reply using the token via SessionManager
         manager
             .reply_query(
                 &inbound.token,
-                "ipc/rpc/calculate",
+                &query_key,
                 b"{\"result\": 30}".to_vec(),
                 "application/json",
             )
@@ -253,14 +274,17 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_zenoh_query_reply_on_wildcard_key_expr_sanitizes() {
         let manager = SessionManager::new();
-        let session_id = manager.connect(SessionConfig::default_peer()).await.unwrap();
+        let session_id = manager.connect(test_peer_config()).await.unwrap();
         let q_id = Uuid::new_v4();
+        let prefix = format!("wildcard_rpc_{}", Uuid::new_v4().simple());
+        let wildcard = format!("{prefix}/wildcard/rpc/**");
+        let query_key = format!("{prefix}/wildcard/rpc");
 
         let (tx, mut rx) = mpsc::channel::<InboundQuery>(10);
 
         // Declare routed queryable on wildcard expression
         manager
-            .declare_queryable_routed(&session_id, q_id, "wildcard/rpc/**", move |inbound| {
+            .declare_queryable_routed(&session_id, q_id, &wildcard, move |inbound| {
                 let _ = tx.try_send(inbound);
             })
             .await
@@ -268,9 +292,10 @@ mod tests {
 
         // Querier sends query on wildcard selector
         let mgr_clone = manager.clone();
+        let wildcard_clone = wildcard.clone();
         let query_handle = tokio::spawn(async move {
             mgr_clone
-                .query_get(&session_id, "wildcard/rpc/**", "all", 3000)
+                .query_get(&session_id, &wildcard_clone, "all", 3000)
                 .await
         });
 
@@ -279,7 +304,7 @@ mod tests {
             .expect("timeout")
             .expect("channel closed");
 
-        // Replying with the inbound wildcard key_expr (e.g. "wildcard/rpc/**") should succeed because it auto-sanitizes
+        // Replying with the inbound wildcard key_expr should succeed because it auto-sanitizes
         manager
             .reply_query(
                 &inbound.token,
@@ -292,7 +317,7 @@ mod tests {
 
         let replies = query_handle.await.unwrap().unwrap();
         assert_eq!(replies.len(), 1);
-        assert_eq!(replies[0].key_expr, "wildcard/rpc");
+        assert_eq!(replies[0].key_expr, query_key);
         assert_eq!(replies[0].payload, b"{\"wildcard_reply\": true}");
         assert!(!replies[0].is_err);
 
@@ -302,7 +327,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_zenoh_query_multiple_queryables_scatter_gather() {
         let manager = SessionManager::new();
-        let session_id = manager.connect(SessionConfig::default_peer()).await.unwrap();
+        let session_id = manager.connect(test_peer_config()).await.unwrap();
 
         let (tx, mut rx) = mpsc::channel::<InboundQuery>(10);
         let prefix = format!("scatter_{}", Uuid::new_v4().simple());
@@ -363,8 +388,6 @@ mod tests {
         manager.disconnect(&session_id).await.unwrap();
     }
 
-
-
     #[tokio::test(flavor = "multi_thread")]
     async fn test_zenoh_query_invalid_session_and_tokens() {
         let manager = SessionManager::new();
@@ -400,22 +423,26 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_undeclare_queryable_prunes_pending_queries() {
         let manager = SessionManager::new();
-        let session_id = manager.connect(SessionConfig::default_peer()).await.unwrap();
+        let session_id = manager.connect(test_peer_config()).await.unwrap();
         let q_id = Uuid::new_v4();
+        let prefix = format!("prune_test_{}", Uuid::new_v4().simple());
+        let wildcard = format!("{prefix}/prune/test/**");
+        let query_key = format!("{prefix}/prune/test/req");
 
         let (tx, mut rx) = mpsc::channel::<InboundQuery>(10);
 
         manager
-            .declare_queryable_routed(&session_id, q_id, "prune/test/**", move |inbound| {
+            .declare_queryable_routed(&session_id, q_id, &wildcard, move |inbound| {
                 let _ = tx.try_send(inbound);
             })
             .await
             .unwrap();
 
         let mgr_clone = manager.clone();
+        let query_key_clone = query_key.clone();
         tokio::spawn(async move {
             let _ = mgr_clone
-                .query_get(&session_id, "prune/test/req", "all", 1000)
+                .query_get(&session_id, &query_key_clone, "all", 1000)
                 .await;
         });
 
@@ -431,7 +458,7 @@ mod tests {
         let reply_res = manager
             .reply_query(
                 &inbound.token,
-                "prune/test/req",
+                &query_key,
                 b"ok".to_vec(),
                 "text/plain",
             )
@@ -444,18 +471,23 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_zenoh_query_with_request_payload_and_consolidation() {
         let manager = SessionManager::new();
-        let session_id = manager.connect(SessionConfig::default_peer()).await.unwrap();
+        let session_id = manager.connect(test_peer_config()).await.unwrap();
         let q_id = Uuid::new_v4();
+        let key_expr = format!("rpc/compute/{}", Uuid::new_v4().simple());
 
+        let reply_key = key_expr.clone();
         // Declare a queryable that inspects query payload and parameters
         manager
-            .declare_queryable(&session_id, q_id, "rpc/service/compute", |query| async move {
-                let p = query.payload.as_deref().unwrap_or(b"");
-                let response = format!("processed: {}", String::from_utf8_lossy(p));
-                query
-                    .reply("rpc/service/compute", response.into_bytes())
-                    .await
-                    .unwrap();
+            .declare_queryable(&session_id, q_id, &key_expr, move |query| {
+                let k = reply_key.clone();
+                async move {
+                    let p = query.payload.as_deref().unwrap_or(b"");
+                    let response = format!("processed: {}", String::from_utf8_lossy(p));
+                    query
+                        .reply(&k, response.into_bytes())
+                        .await
+                        .unwrap();
+                }
             })
             .await
             .unwrap();
@@ -465,7 +497,7 @@ mod tests {
         let replies = manager
             .query_get_advanced(
                 &session_id,
-                "rpc/service/compute",
+                &key_expr,
                 "best_matching",
                 2000,
                 Some(request_payload),
@@ -473,7 +505,6 @@ mod tests {
                 Some("latest".to_string()),
             )
             .await
-
             .unwrap();
 
         assert_eq!(replies.len(), 1);
@@ -486,24 +517,28 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_zenoh_wildcard_queryable_subpath_query() {
         let manager = SessionManager::new();
-        let session_id = manager.connect(SessionConfig::default_peer()).await.unwrap();
+        let session_id = manager.connect(test_peer_config()).await.unwrap();
         let q_id = Uuid::new_v4();
+        let prefix = format!("subpath_{}", Uuid::new_v4().simple());
+        let wildcard = format!("{prefix}/rpc/**");
+        let subpath = format!("{prefix}/rpc/a");
 
         let (tx, mut rx) = mpsc::channel::<InboundQuery>(10);
 
-        // Declare routed queryable on wildcard "rpc/**"
+        // Declare routed queryable on wildcard
         manager
-            .declare_queryable_routed(&session_id, q_id, "rpc/**", move |inbound| {
+            .declare_queryable_routed(&session_id, q_id, &wildcard, move |inbound| {
                 let _ = tx.try_send(inbound);
             })
             .await
             .unwrap();
 
-        // Querier queries specific subpath "rpc/a"
+        // Querier queries specific subpath
         let mgr_clone = manager.clone();
+        let subpath_clone = subpath.clone();
         let query_handle = tokio::spawn(async move {
             mgr_clone
-                .query_get(&session_id, "rpc/a", "all", 3000)
+                .query_get(&session_id, &subpath_clone, "all", 3000)
                 .await
         });
 
@@ -512,14 +547,15 @@ mod tests {
             .expect("timeout")
             .expect("channel closed");
 
-        assert_eq!(inbound.key_expr, "rpc/a");
+        assert_eq!(inbound.key_expr, subpath);
 
-        // Reply using the inbound token and key_expr "rpc/a"
+        // Reply using the inbound token and key_expr
+        let reply_msg = format!("{{\"msg\": \"hello {}\"}}", subpath);
         manager
             .reply_query(
                 &inbound.token,
                 &inbound.key_expr,
-                b"{\"msg\": \"hello rpc/a\"}".to_vec(),
+                reply_msg.into_bytes(),
                 "application/json",
             )
             .await
@@ -527,8 +563,8 @@ mod tests {
 
         let replies = query_handle.await.unwrap().unwrap();
         assert_eq!(replies.len(), 1);
-        assert_eq!(replies[0].key_expr, "rpc/a");
-        assert_eq!(replies[0].payload, b"{\"msg\": \"hello rpc/a\"}");
+        assert_eq!(replies[0].key_expr, subpath);
+        assert_eq!(replies[0].payload, format!("{{\"msg\": \"hello {}\"}}", subpath).into_bytes());
 
         manager.disconnect(&session_id).await.unwrap();
     }
@@ -536,22 +572,26 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_zenoh_wildcard_queryable_subpath_query_with_wildcard_reply_key() {
         let manager = SessionManager::new();
-        let session_id = manager.connect(SessionConfig::default_peer()).await.unwrap();
+        let session_id = manager.connect(test_peer_config()).await.unwrap();
         let q_id = Uuid::new_v4();
+        let prefix = format!("subpath_wild_{}", Uuid::new_v4().simple());
+        let wildcard = format!("{prefix}/rpc/**");
+        let subpath = format!("{prefix}/rpc/a");
 
         let (tx, mut rx) = mpsc::channel::<InboundQuery>(10);
 
         manager
-            .declare_queryable_routed(&session_id, q_id, "rpc/**", move |inbound| {
+            .declare_queryable_routed(&session_id, q_id, &wildcard, move |inbound| {
                 let _ = tx.try_send(inbound);
             })
             .await
             .unwrap();
 
         let mgr_clone = manager.clone();
+        let subpath_clone = subpath.clone();
         let query_handle = tokio::spawn(async move {
             mgr_clone
-                .query_get(&session_id, "rpc/a", "all", 3000)
+                .query_get(&session_id, &subpath_clone, "all", 3000)
                 .await
         });
 
@@ -560,22 +600,23 @@ mod tests {
             .expect("timeout")
             .expect("channel closed");
 
-        // Even if frontend or client passes "rpc/**" (the queryable's declared key),
-        // the backend should sanitize using the actual query's key expression ("rpc/a") so the querier gets the reply
+        // Even if frontend or client passes wildcard (the queryable's declared key),
+        // the backend should sanitize using the actual query's key expression so the querier gets the reply
+        let reply_msg = format!("{{\"msg\": \"hello {}\"}}", subpath);
         manager
             .reply_query(
                 &inbound.token,
-                "rpc/**",
-                b"{\"msg\": \"hello rpc/a\"}".to_vec(),
+                &wildcard,
+                reply_msg.into_bytes(),
                 "application/json",
             )
             .await
             .unwrap();
 
         let replies = query_handle.await.unwrap().unwrap();
-        assert_eq!(replies.len(), 1, "expected 1 reply for rpc/a");
-        assert_eq!(replies[0].key_expr, "rpc/a");
-        assert_eq!(replies[0].payload, b"{\"msg\": \"hello rpc/a\"}");
+        assert_eq!(replies.len(), 1, "expected 1 reply for {}", subpath);
+        assert_eq!(replies[0].key_expr, subpath);
+        assert_eq!(replies[0].payload, format!("{{\"msg\": \"hello {}\"}}", subpath).into_bytes());
 
         manager.disconnect(&session_id).await.unwrap();
     }

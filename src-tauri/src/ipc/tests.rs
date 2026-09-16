@@ -88,6 +88,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_get_socket_path_override() {
+        let prev = std::env::var("ZENOHX_IPC_SOCKET").ok();
+        let custom_path = "/tmp/zenohx-custom-test.sock";
+        std::env::set_var("ZENOHX_IPC_SOCKET", custom_path);
+
+        let resolved = get_socket_path();
+        assert_eq!(resolved.to_str().unwrap(), custom_path);
+
+        if let Some(val) = prev {
+            std::env::set_var("ZENOHX_IPC_SOCKET", val);
+        } else {
+            std::env::remove_var("ZENOHX_IPC_SOCKET");
+        }
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn test_ipc_client_call_mock_server() {
