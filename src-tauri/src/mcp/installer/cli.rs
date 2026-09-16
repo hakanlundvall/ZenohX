@@ -123,6 +123,23 @@ pub fn handle_cli_args_with_writer<W: Write>(
     args: &[String],
     writer: &mut W,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    handle_cli_args_internal(args, writer, None)
+}
+
+/// Handles CLI arguments with custom platform paths for testing isolation.
+pub fn handle_cli_args_with_writer_and_paths<W: Write>(
+    args: &[String],
+    writer: &mut W,
+    paths: Option<&super::registry::PlatformPaths>,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    handle_cli_args_internal(args, writer, paths)
+}
+
+fn handle_cli_args_internal<W: Write>(
+    args: &[String],
+    writer: &mut W,
+    paths: Option<&super::registry::PlatformPaths>,
+) -> Result<bool, Box<dyn std::error::Error>> {
     if args.is_empty() {
         return Ok(false);
     }
@@ -135,6 +152,12 @@ pub fn handle_cli_args_with_writer<W: Write>(
         return Ok(false);
     };
 
+    let (binary_cmd, binary_args) = super::registry::resolve_binary_command();
+    let get_agents = || match paths {
+        Some(p) => super::registry::get_all_agents_with_paths(p),
+        None => super::registry::get_all_agents(),
+    };
+
     let cmd = sub_args[0].as_str();
     match cmd {
         "help" | "--help" | "-h" => {
@@ -142,7 +165,7 @@ pub fn handle_cli_args_with_writer<W: Write>(
             Ok(true)
         }
         "list-agents" | "list" => {
-            let agents = super::registry::get_all_agents();
+            let agents = get_agents();
             let table = format_agents_table(&agents);
             write!(writer, "{}", table)?;
             Ok(true)
@@ -154,9 +177,10 @@ pub fn handle_cli_args_with_writer<W: Write>(
                     writeln!(writer, "Usage: zenohx-mcp install [agent_id | --all]")?;
                 }
                 Some(id) if id != "--all" => {
-                    match super::registry::get_agent_by_id(id) {
+                    let agents = get_agents();
+                    match agents.into_iter().find(|a| a.id == id) {
                         Some(target) => {
-                            match super::mutator::install_agent_by_id(id) {
+                            match super::mutator::install_agent(&target, &binary_cmd, &binary_args) {
                                 Ok(updated) => {
                                     writeln!(
                                         writer,
@@ -181,14 +205,14 @@ pub fn handle_cli_args_with_writer<W: Write>(
                     }
                 }
                 _ => {
-                    let agents = super::registry::get_all_agents();
+                    let agents = get_agents();
                     for agent in &agents {
                         if agent.installed {
                             writeln!(writer, "[SKIP] Already installed: {}", agent.name)?;
                         } else if !agent.detected {
                             writeln!(writer, "[SKIP] Not detected: {}", agent.name)?;
                         } else {
-                            match super::mutator::install_agent_by_id(&agent.id) {
+                            match super::mutator::install_agent(agent, &binary_cmd, &binary_args) {
                                 Ok(updated) => {
                                     writeln!(
                                         writer,
@@ -219,10 +243,10 @@ pub fn handle_cli_args_with_writer<W: Write>(
                     writeln!(writer, "Usage: zenohx-mcp uninstall [agent_id | --all]")?;
                 }
                 Some("--all") => {
-                    let agents = super::registry::get_all_agents();
+                    let agents = get_agents();
                     for agent in &agents {
                         if agent.installed {
-                            match super::mutator::uninstall_agent_by_id(&agent.id) {
+                            match super::mutator::uninstall_agent(agent) {
                                 Ok(updated) => {
                                     writeln!(
                                         writer,
@@ -246,9 +270,10 @@ pub fn handle_cli_args_with_writer<W: Write>(
                     }
                 }
                 Some(id) => {
-                    match super::registry::get_agent_by_id(id) {
+                    let agents = get_agents();
+                    match agents.into_iter().find(|a| a.id == id) {
                         Some(target) => {
-                            match super::mutator::uninstall_agent_by_id(id) {
+                            match super::mutator::uninstall_agent(&target) {
                                 Ok(updated) => {
                                     writeln!(
                                         writer,
@@ -470,30 +495,91 @@ mod tests {
         assert!(out.chars().all(|c| c.is_ascii()));
     }
 
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("zenohx-cli-test-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &PathBuf {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
     #[test]
     fn test_cli_install_all_and_uninstall_all() {
-        // Run install without args or with --all
+        let temp_dir = TempDir::new();
+        let paths = crate::mcp::installer::registry::PlatformPaths {
+            os: crate::mcp::installer::registry::OsKind::Linux,
+            home: temp_dir.path().clone(),
+            xdg_config: temp_dir.path().join(".config"),
+            appdata: temp_dir.path().join("AppData"),
+            macos_app_support: temp_dir.path().join("Library/Application Support"),
+        };
+
+        // 1. In empty temp dir, all agents should be [SKIP] Not detected
         let mut buf = Vec::new();
-        let res = handle_cli_args_with_writer(
+        let res = handle_cli_args_with_writer_and_paths(
             &["zenohx-mcp".to_string(), "install".to_string(), "--all".to_string()],
             &mut buf,
+            Some(&paths),
         )
         .unwrap();
         assert!(res);
         let out = String::from_utf8_lossy(&buf).to_string();
-        // Each agent must either be [OK], [SKIP], or [ERROR]
-        assert!(out.contains("[OK]") || out.contains("[SKIP]") || out.contains("[ERROR]"));
+        assert!(out.contains("[SKIP] Not detected:"));
         assert!(out.chars().all(|c| c.is_ascii()));
 
+        // 2. Create a mock app directory to simulate a detected agent (Cursor)
+        let cursor_dir = temp_dir.path().join(".cursor");
+        std::fs::create_dir_all(&cursor_dir).unwrap();
+
         buf.clear();
-        let res = handle_cli_args_with_writer(
-            &["zenohx-mcp".to_string(), "uninstall".to_string(), "--all".to_string()],
+        let res = handle_cli_args_with_writer_and_paths(
+            &["zenohx-mcp".to_string(), "install".to_string(), "--all".to_string()],
             &mut buf,
+            Some(&paths),
         )
         .unwrap();
         assert!(res);
         let out = String::from_utf8_lossy(&buf).to_string();
-        assert!(out.contains("[OK]") || out.contains("[SKIP]") || out.contains("[ERROR]"));
+        assert!(out.contains("[OK] Installed to Cursor IDE:"));
+        assert!(out.chars().all(|c| c.is_ascii()));
+
+        // 3. Running install again should show [SKIP] Already installed for Cursor
+        buf.clear();
+        let res = handle_cli_args_with_writer_and_paths(
+            &["zenohx-mcp".to_string(), "install".to_string(), "--all".to_string()],
+            &mut buf,
+            Some(&paths),
+        )
+        .unwrap();
+        assert!(res);
+        let out = String::from_utf8_lossy(&buf).to_string();
+        assert!(out.contains("[SKIP] Already installed: Cursor IDE"));
+
+        // 4. Uninstall --all should uninstall Cursor
+        buf.clear();
+        let res = handle_cli_args_with_writer_and_paths(
+            &["zenohx-mcp".to_string(), "uninstall".to_string(), "--all".to_string()],
+            &mut buf,
+            Some(&paths),
+        )
+        .unwrap();
+        assert!(res);
+        let out = String::from_utf8_lossy(&buf).to_string();
+        assert!(out.contains("[OK] Uninstalled from Cursor IDE:"));
         assert!(out.chars().all(|c| c.is_ascii()));
     }
 }
