@@ -24,11 +24,13 @@ use mdns::MdnsManager;
 use tauri::{Emitter, Manager};
 use zenoh::SessionManager;
 
+#[derive(Clone)]
 pub struct AppState {
     pub session_manager: SessionManager,
     pub db: Database,
     pub mdns_manager: MdnsManager,
 }
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -80,11 +82,16 @@ pub fn run() {
                 eprintln!("Failed to auto-start mDNS manager: {e}");
             }
 
-            app.manage(AppState {
+            let app_state = AppState {
                 session_manager: sm_clone.clone(),
                 db,
                 mdns_manager,
-            });
+            };
+            app.manage(app_state.clone());
+
+            let app_state_arc = std::sync::Arc::new(app_state);
+            crate::ipc::server::start_ipc_server(app.handle().clone(), app_state_arc);
+
 
             let sm = sm_clone.clone();
             tauri::async_runtime::spawn(async move {
