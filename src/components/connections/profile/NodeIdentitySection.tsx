@@ -44,17 +44,12 @@ export const NodeIdentitySection: React.FC<NodeIdentitySectionProps> = ({
   };
 
   return (
-    <div className="space-y-3 p-3.5 rounded-lg border bg-muted/10">
-      <div className="flex items-start justify-between gap-2">
-        <div className="space-y-0.5">
-          <Label className="text-xs font-semibold flex items-center gap-1.5">
-            <Fingerprint className="w-3.5 h-3.5 text-primary" />
-            Node Identity (Zenoh ID / ZID)
-          </Label>
-          <p className="text-[11px] text-muted-foreground">
-            Configure an explicit 128-bit hexadecimal Zenoh ID (ZID). Leave blank to auto-generate.
-          </p>
-        </div>
+    <div className="space-y-2.5 p-3.5 rounded-lg border bg-muted/10">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs font-semibold flex items-center gap-1.5">
+          <Fingerprint className="w-3.5 h-3.5 text-primary" />
+          Define Zid
+        </Label>
       </div>
 
       <div className="space-y-1.5">
