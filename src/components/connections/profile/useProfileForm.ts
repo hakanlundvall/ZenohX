@@ -428,7 +428,7 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
       username.trim() || password.trim() || token.trim()
         ? {
             username: username.trim() || undefined,
-            password: password.trim() || undefined,
+            password: password.trim() || (username.trim() ? '' : undefined),
             token: token.trim() || undefined,
           }
         : null;
@@ -507,7 +507,7 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
         scout_multicast: scoutMulticast,
         scout_gossip: scoutGossip,
         reconnect_retry: reconnectRetryConfig,
-        user_auth: null,
+        user_auth: userAuth,
         tls_config: tlsConfig,
         custom_config: customConfigObj,
       };
@@ -598,7 +598,7 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
         username.trim() || password.trim() || token.trim()
           ? {
               username: username.trim() || undefined,
-              password: password.trim() || undefined,
+              password: password.trim() || (username.trim() ? '' : undefined),
               token: token.trim() || undefined,
             }
           : null;

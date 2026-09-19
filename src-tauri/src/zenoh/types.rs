@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UserAuth {
-    #[serde(default)]
+    #[serde(default, alias = "user")]
     pub username: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "pass")]
     pub password: Option<String>,
     #[serde(default)]
     pub token: Option<String>,
@@ -292,26 +292,42 @@ impl SessionConfig {
             if self.scout_gossip { "true" } else { "false" },
         );
 
-        // 5. User Authentication
-        if let Some(auth) = &self.user_auth {
-            if let Some(user) = &auth.username {
-                config
-                    .insert_json5("transport/auth/usrpwd/user", &format!("\"{user}\""))
-                    .map_err(|e| format!("failed to set auth user: {e}"))?;
-            }
-            if let Some(pass) = &auth.password {
-                config
-                    .insert_json5("transport/auth/usrpwd/password", &format!("\"{pass}\""))
-                    .map_err(|e| format!("failed to set auth password: {e}"))?;
-            } else if let Some(token) = &auth.token {
-                if auth.username.is_none() {
+        // 5. Custom JSON5 config overrides (applied before TLS and user auth so explicit fields take precedence)
+        if let Some(custom) = &self.custom_config {
+            if let Some(obj) = custom.as_object() {
+                for (k, v) in obj {
+                    if k == "id" {
+                        if let Some(s) = v.as_str() {
+                            let clean_id = s.replace('-', "").to_lowercase();
+                            if !clean_id.is_empty() && clean_id.chars().all(|c| c.is_ascii_hexdigit()) {
+                                let _ = config.insert_json5("id", &format!("\"{clean_id}\""));
+                            }
+                        }
+                        continue;
+                    }
+                    if mode_str != "router" && (k == "listen" || k.starts_with("listen/")) {
+                        // Peer and Client must neither save nor load listen endpoints to/from JSON5
+                        continue;
+                    }
+                    // If user explicitly configured user_auth, don't let custom transport/auth clobber it
+                    if self.user_auth.is_some()
+                        && (k == "auth"
+                            || k.starts_with("auth/")
+                            || k == "transport/auth"
+                            || k.starts_with("transport/auth/"))
+                    {
+                        continue;
+                    }
+                    let json_val = serde_json::to_string(v)
+                        .map_err(|e| format!("failed to serialize custom config value: {e}"))?;
                     config
-                        .insert_json5("transport/auth/usrpwd/user", "\"token\"")
-                        .map_err(|e| format!("failed to set auth user for token: {e}"))?;
+                        .insert_json5(k, &json_val)
+                        .map_err(|e| format!("failed to insert custom config '{k}': {e}"))?;
                 }
-                config
-                    .insert_json5("transport/auth/usrpwd/password", &format!("\"{token}\""))
-                    .map_err(|e| format!("failed to set auth token: {e}"))?;
+            } else {
+                return Err(
+                    "custom_config must be a JSON object of key-value overrides".to_string(),
+                );
             }
         }
 
@@ -357,34 +373,46 @@ impl SessionConfig {
             }
         }
 
-        // 7. Custom JSON5 config overrides
-        if let Some(custom) = &self.custom_config {
-            if let Some(obj) = custom.as_object() {
-                for (k, v) in obj {
-                    if k == "id" {
-                        if let Some(s) = v.as_str() {
-                            let clean_id = s.replace('-', "").to_lowercase();
-                            if !clean_id.is_empty() && clean_id.chars().all(|c| c.is_ascii_hexdigit()) {
-                                let _ = config.insert_json5("id", &format!("\"{clean_id}\""));
-                            }
-                        }
-                        continue;
-                    }
-                    if mode_str != "router" && (k == "listen" || k.starts_with("listen/")) {
-                        // Peer and Client must neither save nor load listen endpoints to/from JSON5
-                        continue;
-                    }
-                    let json_val = serde_json::to_string(v)
-                        .map_err(|e| format!("failed to serialize custom config value: {e}"))?;
-                    config
-                        .insert_json5(k, &json_val)
-                        .map_err(|e| format!("failed to insert custom config '{k}': {e}"))?;
-                }
-            } else {
-                return Err(
-                    "custom_config must be a JSON object of key-value overrides".to_string(),
-                );
+        // 7. User Authentication (applied last and authoritative)
+        if let Some(auth) = &self.user_auth {
+            let has_user = auth.username.as_ref().map(|u| !u.trim().is_empty()).unwrap_or(false);
+            let has_pass = auth.password.as_ref().map(|p| !p.trim().is_empty()).unwrap_or(false);
+            let has_token = auth.token.as_ref().map(|t| !t.trim().is_empty()).unwrap_or(false);
+
+            if has_user || has_pass || has_token {
+                let user = if has_user {
+                    auth.username.as_ref().unwrap().trim()
+                } else {
+                    "token"
+                };
+                let pass = if has_pass {
+                    auth.password.as_ref().unwrap().trim()
+                } else if has_token {
+                    auth.token.as_ref().unwrap().trim()
+                } else {
+                    "" // Zenoh requires password to be non-null to activate UsrPwd authenticator
+                };
+
+                let user_json = serde_json::to_string(user)
+                    .unwrap_or_else(|_| format!("\"{user}\""));
+                let pass_json = serde_json::to_string(pass)
+                    .unwrap_or_else(|_| format!("\"{pass}\""));
+
+                config
+                    .insert_json5("transport/auth/usrpwd/user", &user_json)
+                    .map_err(|e| format!("failed to set auth user: {e}"))?;
+                config
+                    .insert_json5("transport/auth/usrpwd/password", &pass_json)
+                    .map_err(|e| format!("failed to set auth password: {e}"))?;
             }
+        }
+
+        // If custom_config or anything else set user without password, ensure password is set to ""
+        // so Zenoh's UsrPwd authenticator is not disabled due to a null password.
+        if config.transport().auth().usrpwd().user().is_some()
+            && config.transport().auth().usrpwd().password().is_none()
+        {
+            let _ = config.insert_json5("transport/auth/usrpwd/password", "\"\"");
         }
 
         Ok(config)

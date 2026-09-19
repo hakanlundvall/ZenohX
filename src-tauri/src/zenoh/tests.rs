@@ -250,6 +250,88 @@ mod tests {
         let _ = manager.disconnect(&session_id).await;
     }
 
+    #[test]
+    fn test_user_auth_aliases_and_transport_override_preservation() {
+        // 1. Test deserialization aliases: "user" and "pass"
+        let json_with_aliases = serde_json::json!({
+            "user": "custom_user",
+            "pass": "custom_pass"
+        });
+        let auth: UserAuth = serde_json::from_value(json_with_aliases).expect("deserialization with aliases");
+        assert_eq!(auth.username.as_deref(), Some("custom_user"));
+        assert_eq!(auth.password.as_deref(), Some("custom_pass"));
+
+        // 2. Test that custom_config with "transport" does not erase user_auth
+        let config = SessionConfig {
+            profile_id: None,
+            mode: "client".to_string(),
+            connect_locators: vec!["tcp/127.0.0.1:7447".to_string()],
+            listen_locators: vec![],
+            scout_multicast: false,
+            scout_gossip: false,
+            reconnect_retry: None,
+            user_auth: Some(auth),
+            tls_config: None,
+            custom_config: Some(serde_json::json!({
+                "transport": {
+                    "unicast": {
+                        "max_links": 2
+                    }
+                }
+            })),
+        };
+
+        let zenoh_config = config.to_zenoh_config().expect("valid zenoh config");
+        assert_eq!(zenoh_config.transport().auth().usrpwd().user().as_deref(), Some("custom_user"));
+        assert_eq!(zenoh_config.transport().auth().usrpwd().password().as_deref(), Some("custom_pass"));
+
+        // 3. Test that username-only auth (no password) defaults password to "" so Zenoh enables UsrPwd
+        let config_user_only = SessionConfig {
+            profile_id: None,
+            mode: "client".to_string(),
+            connect_locators: vec!["tcp/127.0.0.1:7447".to_string()],
+            listen_locators: vec![],
+            scout_multicast: false,
+            scout_gossip: false,
+            reconnect_retry: None,
+            user_auth: Some(UserAuth {
+                username: Some("blocked".to_string()),
+                password: None,
+                token: None,
+            }),
+            tls_config: None,
+            custom_config: None,
+        };
+        let zenoh_cfg = config_user_only.to_zenoh_config().expect("valid config");
+        assert_eq!(zenoh_cfg.transport().auth().usrpwd().user().as_deref(), Some("blocked"));
+        assert_eq!(zenoh_cfg.transport().auth().usrpwd().password().as_deref(), Some(""));
+
+        // 4. Test that custom_config with user but no password gets password defaulted to ""
+        let config_custom_user_only = SessionConfig {
+            profile_id: None,
+            mode: "client".to_string(),
+            connect_locators: vec!["tcp/127.0.0.1:7447".to_string()],
+            listen_locators: vec![],
+            scout_multicast: false,
+            scout_gossip: false,
+            reconnect_retry: None,
+            user_auth: None,
+            tls_config: None,
+            custom_config: Some(serde_json::json!({
+                "transport": {
+                    "auth": {
+                        "usrpwd": {
+                            "user": "custom_user_only"
+                        }
+                    }
+                }
+            })),
+        };
+        let zenoh_cfg2 = config_custom_user_only.to_zenoh_config().expect("valid config");
+        assert_eq!(zenoh_cfg2.transport().auth().usrpwd().user().as_deref(), Some("custom_user_only"));
+        assert_eq!(zenoh_cfg2.transport().auth().usrpwd().password().as_deref(), Some(""));
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_session_manager_open_and_close() {
         let manager = SessionManager::new();
@@ -332,10 +414,19 @@ mod tests {
                 token: None,
             }),
             tls_config: None,
-            custom_config: None,
+            custom_config: Some(serde_json::json!({
+                "transport": {
+                    "unicast": {
+                        "max_links": 1
+                    }
+                }
+            })),
         };
         let zenoh_config = valid_config.to_zenoh_config();
         assert!(zenoh_config.is_ok());
+        let cfg = zenoh_config.unwrap();
+        assert_eq!(cfg.transport().auth().usrpwd().user().as_deref(), Some("admin"));
+        assert_eq!(cfg.transport().auth().usrpwd().password().as_deref(), Some("secret"));
 
         let invalid_mode = SessionConfig {
             mode: "invalid_mode".to_string(),

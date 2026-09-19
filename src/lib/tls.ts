@@ -764,8 +764,8 @@ export function generateZenohJson5(config: Partial<ConnectionProfile> | Record<s
     result.transport = result.transport || {};
     result.transport.auth = {
       usrpwd: {
-        user: auth.username || (auth.token ? 'token' : undefined),
-        password: auth.password || auth.token || undefined,
+        user: auth.username || (auth.token ? 'token' : ''),
+        password: auth.password ?? (auth.token ? auth.token : ''),
       },
     };
   }

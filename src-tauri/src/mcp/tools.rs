@@ -202,6 +202,27 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
                         "type": "array",
                         "items": { "type": "string" },
                         "description": "List of endpoint locators to listen on"
+                    },
+                    "username": {
+                        "type": "string",
+                        "description": "Optional username for user authentication"
+                    },
+                    "password": {
+                        "type": "string",
+                        "description": "Optional password for user authentication"
+                    },
+                    "token": {
+                        "type": "string",
+                        "description": "Optional token for token-based authentication"
+                    },
+                    "user_auth": {
+                        "type": "object",
+                        "properties": {
+                            "username": { "type": "string" },
+                            "password": { "type": "string" },
+                            "token": { "type": "string" }
+                        },
+                        "description": "Optional user authentication object with username/password/token"
                     }
                 }
             }
@@ -269,6 +290,27 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
                         "type": "boolean",
                         "description": "If true, immediately opens an active Zenoh session for this new profile after saving",
                         "default": false
+                    },
+                    "username": {
+                        "type": "string",
+                        "description": "Optional username for user authentication"
+                    },
+                    "password": {
+                        "type": "string",
+                        "description": "Optional password for user authentication"
+                    },
+                    "token": {
+                        "type": "string",
+                        "description": "Optional token for token-based authentication"
+                    },
+                    "user_auth": {
+                        "type": "object",
+                        "properties": {
+                            "username": { "type": "string" },
+                            "password": { "type": "string" },
+                            "token": { "type": "string" }
+                        },
+                        "description": "Optional user authentication object with username/password/token"
                     }
                 },
                 "required": ["name", "mode"]
@@ -276,7 +318,7 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
         }),
         json!({
             "name": "zenoh_edit_profile",
-            "description": "Edits an existing connection profile (node) in ZenohX. You can update its name, connect locators, listen locators, or multicast scouting. NOTE: The Zenoh operation mode (peer/client/router) CANNOT be changed.",
+            "description": "Edits an existing connection profile (node) in ZenohX. You can update its name, connect locators, listen locators, multicast scouting, or user authentication. NOTE: The Zenoh operation mode (peer/client/router) CANNOT be changed.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -301,6 +343,27 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
                     "scout_multicast": {
                         "type": "boolean",
                         "description": "Enable or disable multicast scouting"
+                    },
+                    "username": {
+                        "type": "string",
+                        "description": "Optional username for user authentication"
+                    },
+                    "password": {
+                        "type": "string",
+                        "description": "Optional password for user authentication"
+                    },
+                    "token": {
+                        "type": "string",
+                        "description": "Optional token for token-based authentication"
+                    },
+                    "user_auth": {
+                        "type": "object",
+                        "properties": {
+                            "username": { "type": "string" },
+                            "password": { "type": "string" },
+                            "token": { "type": "string" }
+                        },
+                        "description": "Optional user authentication object with username/password/token"
                     },
                     "restart_session": {
                         "type": "boolean",
@@ -557,6 +620,42 @@ async fn resolve_session_id(args: &serde_json::Value, state: &AppState) -> Resul
     }
 }
 
+/// Helper to parse UserAuth from tool arguments (either flat username/password/token or nested user_auth object).
+fn extract_user_auth(args: &serde_json::Value) -> Option<crate::zenoh::types::UserAuth> {
+    if let Some(auth_val) = args.get("user_auth") {
+        if let Ok(auth) = serde_json::from_value::<crate::zenoh::types::UserAuth>(auth_val.clone()) {
+            if auth.username.is_some() || auth.password.is_some() || auth.token.is_some() {
+                return Some(auth);
+            }
+        }
+    }
+    let username = args
+        .get("username")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let password = args
+        .get("password")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let token = args
+        .get("token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    if username.is_some() || password.is_some() || token.is_some() {
+        Some(crate::zenoh::types::UserAuth {
+            username,
+            password,
+            token,
+        })
+    } else {
+        None
+    }
+}
+
 /// Executes a tool on `AppState` directly.
 /// If `app_handle` is Some, execution runs in Live GUI mode (emitting Tauri events).
 /// If `app_handle` is None, execution runs in Headless mode.
@@ -597,13 +696,15 @@ pub async fn execute_tool_on_state_with_mode(
 
         "zenoh_connect_session" => {
             let profile_id = args.get("profile_id").and_then(|v| v.as_str());
+            let explicit_auth = extract_user_auth(&args);
             let config = if let Some(pid) = profile_id {
                 match state.db.get_profile_by_id(pid) {
                     Ok(Some(p)) => {
-                        let user_auth = p
-                            .user_auth
-                            .as_ref()
-                            .and_then(|v| serde_json::from_value(v.clone()).ok());
+                        let user_auth = explicit_auth.or_else(|| {
+                            p.user_auth
+                                .as_ref()
+                                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        });
                         let tls_config = p
                             .tls_config
                             .as_ref()
@@ -656,7 +757,7 @@ pub async fn execute_tool_on_state_with_mode(
                     scout_multicast: true,
                     scout_gossip: true,
                     reconnect_retry: None,
-                    user_auth: None,
+                    user_auth: explicit_auth,
                     tls_config: None,
                     custom_config: None,
                 }
@@ -733,6 +834,10 @@ pub async fn execute_tool_on_state_with_mode(
 
             let now = chrono::Utc::now().timestamp_millis();
             let profile_id = Uuid::new_v4().to_string();
+            let user_auth = extract_user_auth(&args);
+            let user_auth_json = user_auth
+                .as_ref()
+                .and_then(|a| serde_json::to_value(a).ok());
 
             let profile = crate::db::models::ConnectionProfile {
                 id: profile_id,
@@ -741,7 +846,7 @@ pub async fn execute_tool_on_state_with_mode(
                 connect_locators: connect_locators.clone(),
                 listen_locators: listen_locators.clone(),
                 scout_multicast,
-                user_auth: None,
+                user_auth: user_auth_json,
                 tls_config: None,
                 custom_config: None,
                 created_at: now,
@@ -768,7 +873,7 @@ pub async fn execute_tool_on_state_with_mode(
                     scout_multicast: profile.scout_multicast,
                     scout_gossip: true,
                     reconnect_retry: None,
-                    user_auth: None,
+                    user_auth,
                     tls_config: None,
                     custom_config: None,
                 };
@@ -881,6 +986,18 @@ pub async fn execute_tool_on_state_with_mode(
 
             if let Some(scout) = args.get("scout_multicast").and_then(|v| v.as_bool()) {
                 profile.scout_multicast = scout;
+            }
+
+            if args.get("username").is_some()
+                || args.get("password").is_some()
+                || args.get("token").is_some()
+                || args.get("user_auth").is_some()
+            {
+                if let Some(new_auth) = extract_user_auth(&args) {
+                    profile.user_auth = serde_json::to_value(new_auth).ok();
+                } else {
+                    profile.user_auth = None;
+                }
             }
 
             if let Err(e) = profile.validate() {
@@ -2422,6 +2539,78 @@ mod tests {
         let sessions = state.session_manager.get_all_sessions().await;
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id.to_string(), session_id);
+
+        let _ = execute_tool_on_state("zenoh_disconnect_session", json!({}), &state, None).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_execute_tool_create_and_edit_profile_with_auth() {
+        let state = create_test_state();
+
+        // 1. Create profile with username and password
+        let resp = execute_tool_on_state(
+            "zenoh_create_profile",
+            json!({
+                "name": "Auth Node",
+                "mode": "client",
+                "connect_locators": ["tcp/127.0.0.1:7447"],
+                "username": "alice",
+                "password": "secretpassword"
+            }),
+            &state,
+            None,
+        ).await;
+
+        assert!(resp.success);
+        let profile_id = resp.data["profile"]["id"].as_str().unwrap();
+        assert_eq!(resp.data["profile"]["user_auth"]["username"], "alice");
+        assert_eq!(resp.data["profile"]["user_auth"]["password"], "secretpassword");
+
+        // Verify in DB
+        let in_db = state.db.get_profile_by_id(profile_id).unwrap().unwrap();
+        let auth_val = in_db.user_auth.expect("user_auth present");
+        assert_eq!(auth_val["username"], "alice");
+        assert_eq!(auth_val["password"], "secretpassword");
+
+        // 2. Edit profile to update password
+        let edit_resp = execute_tool_on_state(
+            "zenoh_edit_profile",
+            json!({
+                "profile_id": profile_id,
+                "password": "newpassword"
+            }),
+            &state,
+            None,
+        ).await;
+
+        assert!(edit_resp.success);
+        let updated_in_db = state.db.get_profile_by_id(profile_id).unwrap().unwrap();
+        let updated_auth = updated_in_db.user_auth.expect("user_auth present");
+        assert_eq!(updated_auth["password"], "newpassword");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_execute_tool_connect_session_with_explicit_auth() {
+        let state = create_test_state();
+
+        let resp = execute_tool_on_state(
+            "zenoh_connect_session",
+            json!({
+                "mode": "peer",
+                "username": "bob",
+                "password": "bobpassword"
+            }),
+            &state,
+            None,
+        ).await;
+
+        assert!(resp.success);
+        let zid = resp.data["zid"].as_str().unwrap();
+
+        // Check session context has user_auth via get_node_configuration
+        let node_cfg = state.session_manager.get_node_configuration(zid).await.unwrap();
+        assert!(node_cfg.json5.contains("\"user\": \"bob\""));
+        assert!(node_cfg.json5.contains("\"password\": \"bobpassword\""));
 
         let _ = execute_tool_on_state("zenoh_disconnect_session", json!({}), &state, None).await;
     }
