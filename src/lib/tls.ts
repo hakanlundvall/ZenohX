@@ -710,7 +710,7 @@ export function generateZenohJson5(config: Partial<ConnectionProfile> | Record<s
     mode,
   };
 
-  const rawZid = (config as any).zid;
+  const rawZid = (config as any).zid || (config as any).custom_config?.id;
   if (rawZid && typeof rawZid === 'string') {
     const cleanZid = rawZid.replace(/-/g, '').toLowerCase();
     if (/^[0-9a-f]{1,32}$/.test(cleanZid)) {
@@ -853,5 +853,26 @@ export function generateZenohJson5(config: Partial<ConnectionProfile> | Record<s
   }
 
   return JSON.stringify(result, null, 2);
+}
+
+/**
+ * Checks whether a given string is a valid hexadecimal Zenoh ID (ZID).
+ * In Zenoh, IDs are 1 to 16 bytes (1 to 32 hexadecimal characters). Hyphens are ignored.
+ */
+export function isValidZid(val?: string | null): boolean {
+  if (!val || typeof val !== 'string') return false;
+  const clean = val.trim().replace(/-/g, '').toLowerCase();
+  return /^[0-9a-f]{1,32}$/.test(clean);
+}
+
+/**
+ * Generates a random 128-bit (16-byte / 32-character) hexadecimal Zenoh ID (ZID).
+ */
+export function generateRandomZid(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 

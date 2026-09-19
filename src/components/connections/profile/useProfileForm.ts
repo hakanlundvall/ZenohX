@@ -108,6 +108,9 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
   // Custom JSON Config Overrides
   const [customConfigText, setCustomConfigText] = useState<string>('');
 
+  // Node Identity (ZID) State
+  const [zid, setZid] = useState<string>('');
+
   // UI State
   const [validationError, setValidationError] = useState<string | null>(null);
   const [testSuccessMessage, setTestSuccessMessage] = useState<string | null>(null);
@@ -141,6 +144,9 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
         setCaCert(profile.tls_config?.ca_cert || '');
         setClientCert(profile.tls_config?.client_cert || '');
         setClientKey(profile.tls_config?.client_key || '');
+
+        const initialZid = (profile as any)?.zid || (profile.custom_config as any)?.id || '';
+        setZid(initialZid);
 
         // Populate client form if client mode
         if (profile.connect_locators && profile.connect_locators.length > 0) {
@@ -238,6 +244,7 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
         setClientCert('');
         setClientKey('');
         setCustomConfigText('');
+        setZid('');
       }
       setValidationError(null);
       setTestSuccessMessage(null);
@@ -489,6 +496,14 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
       }
     }
 
+    if (zid.trim()) {
+      const cleanZid = zid.trim().replace(/-/g, '').toLowerCase();
+      if (!/^[0-9a-f]{1,32}$/.test(cleanZid)) {
+        setValidationError('Invalid Zenoh ID (ZID). Must be a hexadecimal string up to 32 characters (16 bytes).');
+        return false;
+      }
+    }
+
     setValidationError(null);
     return true;
   };
@@ -517,6 +532,17 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
       : null;
 
     const hasCustomCertFields = Boolean(caCert.trim() || clientCert.trim() || clientKey.trim());
+    const customZid = zid.trim() ? zid.trim().replace(/-/g, '').toLowerCase() : '';
+    if (customZid) {
+      customConfigObj = {
+        ...(customConfigObj || {}),
+        id: customZid,
+      };
+    }
+    const activeSession = profile?.id
+      ? useConnectionStore.getState().activeSessions[profile.id]
+      : null;
+    const activeZid = customZid || activeSession?.zid || (profile as any)?.zid;
 
     if (preset === 'client') {
       const parsed = parseLocator(clientLocator.trim());
@@ -534,13 +560,10 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
         clientKey,
         tlsOnly,
       });
-      const activeZid = profile?.id
-        ? useConnectionStore.getState().activeSessions[profile.id]?.zid
-        : (profile as any)?.zid;
       return {
         profile_id: profile?.id,
-        id: activeZid || profile?.id,
-        zid: activeZid,
+        id: customZid || activeZid || profile?.id,
+        zid: customZid || activeZid,
         mode: 'client',
         connect_locators: locator ? [locator] : [],
         listen_locators: [],
@@ -560,17 +583,13 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
         clientKey,
         tlsOnly,
       });
-      const activeSession = profile?.id
-        ? useConnectionStore.getState().activeSessions[profile.id]
-        : null;
-      const activeZid = activeSession?.zid || (profile as any)?.zid;
 
       const configuredPeerLocs = listenLocators.map((l) => l.trim()).filter(Boolean);
 
       return {
         profile_id: profile?.id,
-        id: activeZid || profile?.id,
-        zid: activeZid,
+        id: customZid || activeZid || profile?.id,
+        zid: customZid || activeZid,
         mode: 'peer',
         connect_locators: connectLocators.map((l) => l.trim()).filter(Boolean),
         listen_locators: configuredPeerLocs,
@@ -585,10 +604,6 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
       const listenLocs = routerListenEndpoints
         .map((ep) => buildLocator(ep.protocol, ep.host.trim() || (ep.protocol === 'unix' ? '/tmp/zenoh.sock' : '0.0.0.0'), ep.port.trim()))
         .filter(Boolean);
-      const activeSession = profile?.id
-        ? useConnectionStore.getState().activeSessions[profile.id]
-        : null;
-      const activeZid = activeSession?.zid || (profile as any)?.zid;
 
       const resolvedRouterListenLocs = listenLocs.length > 0 ? listenLocs : ['tcp/0.0.0.0:7447'];
 
@@ -635,8 +650,8 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
 
       return {
         profile_id: profile?.id,
-        id: activeZid || profile?.id,
-        zid: activeZid,
+        id: customZid || activeZid || profile?.id,
+        zid: customZid || activeZid,
         mode: 'router',
         connect_locators: finalRouterConnectLocators,
         listen_locators: resolvedRouterListenLocs,
@@ -821,9 +836,12 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
         };
       }
 
+      const customZid = zid.trim() ? zid.trim().replace(/-/g, '').toLowerCase() : '';
+
       // Generate the full live JSON5 configuration object for this profile
       const fullJson5Str = generateZenohJson5({
-        id: profile?.id,
+        id: customZid || profile?.id,
+        zid: customZid || undefined,
         mode: finalMode,
         connect_locators: finalConnectLocators,
         listen_locators: finalListenLocators,
@@ -845,10 +863,14 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
       if (finalCustomConfig && customConfigObj && (customConfigObj as any).upstream_endpoints) {
         finalCustomConfig.upstream_endpoints = (customConfigObj as any).upstream_endpoints;
       }
+      if (finalCustomConfig && customZid) {
+        finalCustomConfig.id = customZid;
+      }
 
       const now = Date.now();
       const updatedProfile: ConnectionProfile = {
         id: profile?.id || crypto.randomUUID(),
+        zid: customZid || undefined,
         name: finalName,
         mode: finalMode,
         connect_locators: finalConnectLocators,
@@ -1026,6 +1048,11 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
     isTesting,
     handleTestConnection,
     handleSave,
+    zid,
+    setZid,
+    activeSessionZid: profile?.id
+      ? useConnectionStore.getState().activeSessions[profile.id]?.zid
+      : undefined,
     // Backward-compatibility aliases
     clientHost: parsedClient?.host || '',
     setClientHost: (h: string) => {

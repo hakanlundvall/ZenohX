@@ -324,6 +324,67 @@ describe('Transport Protocol & Locator Utilities', () => {
     assert.equal(parsed._internal_ui, undefined);
     assert.equal(parsed.transport?.unicast?.max_links, 10);
   });
+
+  it('validates Zenoh IDs correctly with isValidZid', async () => {
+    const { isValidZid } = await import('../../src/lib/tls');
+
+    // Valid 32-char hex string
+    assert.equal(isValidZid('0123456789abcdef0123456789abcdef'), true);
+    assert.equal(isValidZid('01234567-89ab-cdef-0123-456789abcdef'), true); // UUID format
+    assert.equal(isValidZid('a1b2c3d4'), true); // short hex
+    assert.equal(isValidZid('ABCDEF123456'), true); // uppercase hex
+
+    // Invalid
+    assert.equal(isValidZid(''), false);
+    assert.equal(isValidZid(null as any), false);
+    assert.equal(isValidZid('xyz123'), false); // non-hex
+    assert.equal(isValidZid('0123456789abcdef0123456789abcdef0123456789abcdef'), false); // > 32 hex chars
+  });
+
+  it('generates valid random 128-bit ZIDs with generateRandomZid', async () => {
+    const { generateRandomZid, isValidZid } = await import('../../src/lib/tls');
+
+    const zid = generateRandomZid();
+    assert.equal(typeof zid, 'string');
+    assert.equal(zid.length, 32);
+    assert.equal(isValidZid(zid), true);
+    assert.match(zid, /^[0-9a-f]{32}$/);
+  });
+
+  it('generates JSON5 configuration with explicit ZID across modes', async () => {
+    const { generateZenohJson5 } = await import('../../src/lib/tls');
+
+    // Client mode with explicit ZID
+    const clientJson = generateZenohJson5({
+      mode: 'client',
+      zid: '1234567890abcdef1234567890abcdef',
+      connect_locators: ['tcp/127.0.0.1:7447'],
+    });
+    const parsedClient = JSON.parse(clientJson);
+    assert.equal(parsedClient.id, '1234567890abcdef1234567890abcdef');
+    assert.equal(parsedClient.mode, 'client');
+
+    // Peer mode with explicit ZID
+    const peerJson = generateZenohJson5({
+      mode: 'peer',
+      zid: 'abcdef1234567890abcdef1234567890',
+      connect_locators: [],
+    });
+    const parsedPeer = JSON.parse(peerJson);
+    assert.equal(parsedPeer.id, 'abcdef1234567890abcdef1234567890');
+    assert.equal(parsedPeer.mode, 'peer');
+
+    // Router mode with custom_config.id
+    const routerJson = generateZenohJson5({
+      mode: 'router',
+      custom_config: {
+        id: 'fedcba9876543210fedcba9876543210',
+      },
+    });
+    const parsedRouter = JSON.parse(routerJson);
+    assert.equal(parsedRouter.id, 'fedcba9876543210fedcba9876543210');
+    assert.equal(parsedRouter.mode, 'router');
+  });
 });
 
 

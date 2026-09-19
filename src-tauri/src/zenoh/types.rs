@@ -174,15 +174,33 @@ impl SessionConfig {
         let mut config = zenoh::Config::default();
 
         // 0. Persistent Node ID (ZID)
-        // Derive a valid hexadecimal Zenoh ID (without syntax-breaking leading zero formatting)
-        if let Some(pid) = &self.profile_id {
+        // Prioritize explicit ZID from custom_config ("id" or "zid") if configured, otherwise derive from profile_id
+        let explicit_zid = self.custom_config.as_ref().and_then(|c| {
+            c.get("id").or_else(|| c.get("zid")).and_then(|v| v.as_str())
+        });
+        if let Some(explicit_zid) = explicit_zid {
+            let raw_clean = explicit_zid.replace('-', "").to_lowercase();
+            let trimmed = raw_clean.trim_start_matches('0');
+            let clean_id = if trimmed.is_empty() { "0" } else { trimmed };
+            if !clean_id.is_empty() && clean_id.chars().all(|c| c.is_ascii_hexdigit()) {
+                if let Ok(parsed_zid) = clean_id.parse::<zenoh::config::ZenohId>() {
+                    let _ = config.set_id(Some(parsed_zid));
+                } else {
+                    let _ = config.insert_json5("id", &format!("\"{clean_id}\""));
+                }
+            }
+        } else if let Some(pid) = &self.profile_id {
             let zid_hex = if let Ok(u) = uuid::Uuid::parse_str(pid) {
                 format!("{:x}", u.as_u128())
             } else {
                 let u = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, pid.as_bytes());
                 format!("{:x}", u.as_u128())
             };
-            let _ = config.insert_json5("id", &format!("\"{zid_hex}\""));
+            if let Ok(parsed_zid) = zid_hex.parse::<zenoh::config::ZenohId>() {
+                let _ = config.set_id(Some(parsed_zid));
+            } else {
+                let _ = config.insert_json5("id", &format!("\"{zid_hex}\""));
+            }
         }
 
         // 1. Mode configuration ("peer", "client", "router")
@@ -300,11 +318,17 @@ impl SessionConfig {
                     if k == "upstream_endpoints" || k.starts_with('_') {
                         continue;
                     }
-                    if k == "id" {
+                    if k == "id" || k == "zid" {
                         if let Some(s) = v.as_str() {
-                            let clean_id = s.replace('-', "").to_lowercase();
+                            let raw_clean = s.replace('-', "").to_lowercase();
+                            let trimmed = raw_clean.trim_start_matches('0');
+                            let clean_id = if trimmed.is_empty() { "0" } else { trimmed };
                             if !clean_id.is_empty() && clean_id.chars().all(|c| c.is_ascii_hexdigit()) {
-                                let _ = config.insert_json5("id", &format!("\"{clean_id}\""));
+                                if let Ok(parsed_zid) = clean_id.parse::<zenoh::config::ZenohId>() {
+                                    let _ = config.set_id(Some(parsed_zid));
+                                } else {
+                                    let _ = config.insert_json5("id", &format!("\"{clean_id}\""));
+                                }
                             }
                         }
                         continue;

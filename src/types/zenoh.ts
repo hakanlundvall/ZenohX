@@ -110,6 +110,7 @@ export interface ReconnectRetryConfig {
  */
 export interface SessionConfig {
   profile_id?: string;
+  zid?: string;
   mode: ConnectionMode | string;
   connect_locators: string[];
   listen_locators: string[];
@@ -126,6 +127,7 @@ export interface SessionConfig {
  */
 export interface ConnectionProfile {
   id: string;
+  zid?: string;
   name: string;
   mode: ConnectionMode | string;
   connect_locators: string[];

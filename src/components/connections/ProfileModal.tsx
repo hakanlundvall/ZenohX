@@ -31,6 +31,7 @@ import { PresetSelector } from './profile/PresetSelector';
 import { ClientConfigForm } from './profile/ClientConfigForm';
 import { PeerConfigForm } from './profile/PeerConfigForm';
 import { RouterConfigForm } from './profile/RouterConfigForm';
+import { NodeIdentitySection } from './profile/NodeIdentitySection';
 import { TlsConfigSection } from './profile/TlsConfigSection';
 import { MeshRoutingSection } from './profile/MeshRoutingSection';
 import { RawJsonConfigSection } from './profile/RawJsonConfigSection';
@@ -213,6 +214,13 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
           {/* Advanced Settings Body */}
           {form.showAdvanced && (
             <div className="space-y-5 pt-2 border-t animate-in fade-in duration-200">
+              {/* Node Identity / Zenoh ID (ZID) Card */}
+              <NodeIdentitySection
+                zid={form.zid}
+                setZid={form.setZid}
+                activeSessionZid={form.activeSessionZid}
+              />
+
               {/* Mesh Routing & Discovery Policy Card */}
               <MeshRoutingSection
                 scoutMulticast={form.preset === 'router' ? form.routerScoutMulticast : form.scoutMulticast}

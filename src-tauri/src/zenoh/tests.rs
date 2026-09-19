@@ -374,6 +374,54 @@ mod tests {
         assert_eq!(zenoh_cfg.transport().auth().usrpwd().password().as_deref(), Some("pass1"));
     }
 
+    #[test]
+    fn test_custom_config_explicit_zid_across_modes() {
+        for mode in ["client", "peer", "router"] {
+            let config = SessionConfig {
+                profile_id: Some("fallback-uuid-1234".to_string()),
+                mode: mode.to_string(),
+                connect_locators: vec![],
+                listen_locators: vec![],
+                scout_multicast: false,
+                scout_gossip: false,
+                reconnect_retry: None,
+                user_auth: None,
+                tls_config: None,
+                custom_config: Some(serde_json::json!({
+                    "id": "1234567890abcdef1234567890abcdef"
+                })),
+            };
+
+            let zenoh_cfg = config.to_zenoh_config().expect("valid zenoh config");
+            assert_eq!(
+                zenoh_cfg.id().as_ref().map(|id| id.to_string().to_lowercase()).as_deref(),
+                Some("1234567890abcdef1234567890abcdef")
+            );
+
+            // Verify leading zeros normalization
+            let config_leading_zeros = SessionConfig {
+                profile_id: None,
+                mode: mode.to_string(),
+                connect_locators: vec![],
+                listen_locators: vec![],
+                scout_multicast: false,
+                scout_gossip: false,
+                reconnect_retry: None,
+                user_auth: None,
+                tls_config: None,
+                custom_config: Some(serde_json::json!({
+                    "id": "00001234567890abcdef"
+                })),
+            };
+
+            let zenoh_cfg_normalized = config_leading_zeros.to_zenoh_config().expect("valid config with leading zeros");
+            assert_eq!(
+                zenoh_cfg_normalized.id().as_ref().map(|id| id.to_string().to_lowercase()).as_deref(),
+                Some("1234567890abcdef")
+            );
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_session_manager_open_and_close() {
         let manager = SessionManager::new();
