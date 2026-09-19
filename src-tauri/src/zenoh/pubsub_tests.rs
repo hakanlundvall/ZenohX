@@ -394,4 +394,45 @@ mod tests {
 
         manager.disconnect(&session_id).await.unwrap();
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_zenoh_pubsub_leading_slash_sanitization() {
+        use crate::zenoh::pubsub::sanitize_key_expr;
+
+        assert_eq!(sanitize_key_expr("/provision/response"), "provision/response");
+        assert_eq!(sanitize_key_expr("provision/response"), "provision/response");
+        assert_eq!(sanitize_key_expr("@/admin/stats"), "@/admin/stats");
+        assert_eq!(sanitize_key_expr("  /leading/and/trailing/spaces  "), "leading/and/trailing/spaces");
+
+        let manager = SessionManager::new();
+        let config = SessionConfig::default_peer();
+        let session_id = manager.connect(config).await.unwrap();
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let sub_id = Uuid::new_v4();
+
+        // Subscribing with a leading slash should be auto-sanitized instead of throwing EmptyChunk
+        manager
+            .subscribe(&session_id, sub_id, "/test/leading/slash", move |sample| {
+                let _ = tx.try_send(sample);
+            })
+            .await
+            .unwrap();
+
+        // Publishing with a leading slash should also be auto-sanitized
+        manager
+            .publish(&session_id, "/test/leading/slash", b"sanitized payload".to_vec(), "text", "put")
+            .await
+            .unwrap();
+
+        let sample = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("timeout waiting for sample")
+            .expect("channel closed");
+
+        assert_eq!(sample.payload, b"sanitized payload");
+        assert_eq!(sample.key_expr, "test/leading/slash");
+
+        manager.disconnect(&session_id).await.unwrap();
+    }
 }

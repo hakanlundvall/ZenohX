@@ -131,6 +131,16 @@ pub async fn publish_sample(
     publish_sample_with_options(session, key_expr, payload, encoding, kind, None).await
 }
 
+/// Sanitizes a Zenoh key expression by trimming whitespace and stripping any leading '/' (unless it's an internal '@/' prefix).
+pub fn sanitize_key_expr(key: &str) -> &str {
+    let trimmed = key.trim();
+    if trimmed.starts_with('/') && !trimmed.starts_with("@/") {
+        trimmed.trim_start_matches('/')
+    } else {
+        trimmed
+    }
+}
+
 /// Advanced publisher supporting QoS priorities, congestion control, attachments, and express mode.
 pub async fn publish_sample_with_options(
     session: &zenoh::Session,
@@ -140,6 +150,7 @@ pub async fn publish_sample_with_options(
     kind: &str,
     options: Option<PublishOptions>,
 ) -> Result<(), String> {
+    let key_expr = sanitize_key_expr(key_expr);
     let kind_lower = kind.to_lowercase();
     match kind_lower.as_str() {
         "delete" => {
@@ -214,6 +225,7 @@ pub async fn subscribe_with_callback_and_options<F>(
 where
     F: Fn(ZenohSample) + Send + Sync + 'static,
 {
+    let key_expr = sanitize_key_expr(key_expr);
     let mut builder = session.declare_subscriber(key_expr);
 
     if let Some(opts) = options {
