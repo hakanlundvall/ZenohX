@@ -18,6 +18,7 @@ import {
   Trash2,
   Link,
   Radio,
+  Shield,
 } from 'lucide-react';
 import { Label } from '../../ui/label';
 import { Input } from '../../ui/input';
@@ -51,6 +52,10 @@ export interface PeerConfigFormProps {
   setClientCert?: (val: string) => void;
   clientKey?: string;
   setClientKey?: (val: string) => void;
+  username?: string;
+  setUsername?: (val: string) => void;
+  password?: string;
+  setPassword?: (val: string) => void;
 }
 
 export const PeerConfigForm: React.FC<PeerConfigFormProps> = ({
@@ -64,6 +69,10 @@ export const PeerConfigForm: React.FC<PeerConfigFormProps> = ({
   addListenLocator,
   updateListenLocator,
   removeListenLocator,
+  username = '',
+  setUsername,
+  password = '',
+  setPassword,
 }) => {
   const activeMdnsHost = useActiveMdnsHost();
 
@@ -180,6 +189,31 @@ export const PeerConfigForm: React.FC<PeerConfigFormProps> = ({
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* User Authentication */}
+      {setUsername && setPassword && (
+        <div className="space-y-2 pt-2 border-t">
+          <Label className="text-xs font-semibold flex items-center gap-1.5">
+            <Shield className="w-3.5 h-3.5 text-muted-foreground" />
+            <span>User Authentication (Optional)</span>
+          </Label>
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Username"
+              className="h-8 text-xs bg-background"
+            />
+            <Input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password / Token"
+              className="h-8 text-xs bg-background"
+            />
+          </div>
         </div>
       )}
     </div>

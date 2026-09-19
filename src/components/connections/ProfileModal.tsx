@@ -164,6 +164,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               addListenLocator={form.addListenLocator}
               updateListenLocator={form.updateListenLocator}
               removeListenLocator={form.removeListenLocator}
+              username={form.username}
+              setUsername={form.setUsername}
+              password={form.password}
+              setPassword={form.setPassword}
             />
           )}
 
@@ -179,6 +183,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               addRouterConnectLocator={form.addRouterConnectLocator}
               updateRouterConnectLocator={form.updateRouterConnectLocator}
               removeRouterConnectLocator={form.removeRouterConnectLocator}
+              username={form.username}
+              setUsername={form.setUsername}
+              password={form.password}
+              setPassword={form.setPassword}
             />
           )}
 

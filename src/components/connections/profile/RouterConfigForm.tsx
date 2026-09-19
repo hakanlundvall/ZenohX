@@ -18,6 +18,7 @@ import {
   Radio,
   Plus,
   Trash2,
+  Shield,
 } from 'lucide-react';
 import { Label } from '../../ui/label';
 import { Input } from '../../ui/input';
@@ -47,6 +48,10 @@ export interface RouterConfigFormProps {
   addRouterConnectLocator: () => void;
   updateRouterConnectLocator: (index: number, val: string) => void;
   removeRouterConnectLocator: (index: number) => void;
+  username?: string;
+  setUsername?: (val: string) => void;
+  password?: string;
+  setPassword?: (val: string) => void;
 }
 
 export const RouterConfigForm: React.FC<RouterConfigFormProps> = ({
@@ -60,6 +65,10 @@ export const RouterConfigForm: React.FC<RouterConfigFormProps> = ({
   addRouterConnectLocator,
   updateRouterConnectLocator,
   removeRouterConnectLocator,
+  username = '',
+  setUsername,
+  password = '',
+  setPassword,
 }) => {
   const activeMdnsHost = useActiveMdnsHost();
   return (
@@ -268,6 +277,31 @@ export const RouterConfigForm: React.FC<RouterConfigFormProps> = ({
                 </Button>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Upstream Router Authentication */}
+        {setUsername && setPassword && (
+          <div className="space-y-2 pt-2 border-t border-border/50">
+            <Label className="text-xs font-semibold flex items-center gap-1.5">
+              <Shield className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>Upstream Authentication (Optional)</span>
+            </Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Username"
+                className="h-8 text-xs bg-background"
+              />
+              <Input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password / Token"
+                className="h-8 text-xs bg-background"
+              />
+            </div>
           </div>
         )}
       </div>
