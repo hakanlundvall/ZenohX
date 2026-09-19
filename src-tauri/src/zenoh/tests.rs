@@ -332,6 +332,48 @@ mod tests {
         assert_eq!(zenoh_cfg2.transport().auth().usrpwd().password().as_deref(), Some(""));
     }
 
+    #[test]
+    fn test_custom_config_ignores_upstream_endpoints_metadata() {
+        let config = SessionConfig {
+            profile_id: None,
+            mode: "router".to_string(),
+            connect_locators: vec!["tcp/127.0.0.1:7447".to_string()],
+            listen_locators: vec!["tcp/0.0.0.0:7448".to_string()],
+            scout_multicast: false,
+            scout_gossip: false,
+            reconnect_retry: None,
+            user_auth: Some(UserAuth {
+                username: Some("user1".to_string()),
+                password: Some("pass1".to_string()),
+                token: None,
+            }),
+            tls_config: None,
+            custom_config: Some(serde_json::json!({
+                "upstream_endpoints": [
+                    {
+                        "id": "up-1",
+                        "locator": "tcp/127.0.0.1:7447",
+                        "username": "user1",
+                        "password": "pass1"
+                    },
+                    {
+                        "id": "up-2",
+                        "locator": "tcp/127.0.0.1:7449",
+                        "username": "user2",
+                        "password": "pass2"
+                    }
+                ],
+                "_custom_ui_tag": "test"
+            })),
+        };
+
+        // Must succeed without failing with Str("unknown key")
+        let zenoh_cfg = config.to_zenoh_config().expect("valid zenoh config");
+        assert!(matches!(zenoh_cfg.mode(), Some(zenoh::config::WhatAmI::Router)));
+        assert_eq!(zenoh_cfg.transport().auth().usrpwd().user().as_deref(), Some("user1"));
+        assert_eq!(zenoh_cfg.transport().auth().usrpwd().password().as_deref(), Some("pass1"));
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_session_manager_open_and_close() {
         let manager = SessionManager::new();

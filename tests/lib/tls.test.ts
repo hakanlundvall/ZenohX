@@ -293,6 +293,37 @@ describe('Transport Protocol & Locator Utilities', () => {
     const clientPreset = PRODUCTION_PRESETS.find((p) => p.role === 'client');
     assert.deepEqual(clientPreset?.suggestedLocators, ['tcp/zenohx.local:7447']);
   });
+
+  it('strips internal upstream_endpoints and underscore keys in generateZenohJson5', async () => {
+    const { generateZenohJson5 } = await import('../../src/lib/tls');
+
+    const json = generateZenohJson5({
+      mode: 'router',
+      connect_locators: ['tcp/upstream.local:7447'],
+      listen_locators: ['tcp/0.0.0.0:7447'],
+      custom_config: {
+        upstream_endpoints: [
+          {
+            id: 'up-1',
+            locator: 'tcp/upstream.local:7447',
+            username: 'alice',
+            password: 'secret',
+          },
+        ],
+        _internal_ui: true,
+        transport: {
+          unicast: {
+            max_links: 10,
+          },
+        },
+      },
+    });
+
+    const parsed = JSON.parse(json);
+    assert.equal(parsed.upstream_endpoints, undefined);
+    assert.equal(parsed._internal_ui, undefined);
+    assert.equal(parsed.transport?.unicast?.max_links, 10);
+  });
 });
 
 

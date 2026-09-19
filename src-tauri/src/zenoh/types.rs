@@ -296,6 +296,10 @@ impl SessionConfig {
         if let Some(custom) = &self.custom_config {
             if let Some(obj) = custom.as_object() {
                 for (k, v) in obj {
+                    // Internal UI / ZenohX metadata stored in custom_config (e.g. per-upstream credentials)
+                    if k == "upstream_endpoints" || k.starts_with('_') {
+                        continue;
+                    }
                     if k == "id" {
                         if let Some(s) = v.as_str() {
                             let clean_id = s.replace('-', "").to_lowercase();

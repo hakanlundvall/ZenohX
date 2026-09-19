@@ -797,6 +797,9 @@ export function generateZenohJson5(config: Partial<ConnectionProfile> | Record<s
   const custom = (config as any).custom_config;
   if (custom && typeof custom === 'object' && !Array.isArray(custom)) {
     for (const [k, v] of Object.entries(custom)) {
+      if (k === 'upstream_endpoints' || k.startsWith('_')) {
+        continue;
+      }
       if (k === 'connect') {
         if (v && typeof v === 'object' && !Array.isArray(v)) {
           result.connect = { ...(v as any), ...result.connect };
