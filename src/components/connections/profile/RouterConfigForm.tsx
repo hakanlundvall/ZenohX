@@ -33,6 +33,13 @@ export interface RouterListenEndpoint {
   port: string;
 }
 
+export interface RouterUpstreamEndpoint {
+  id: string;
+  locator: string;
+  username?: string;
+  password?: string;
+}
+
 export interface RouterConfigFormProps {
   routerName: string;
   setRouterName: (val: string) => void;
@@ -44,10 +51,15 @@ export interface RouterConfigFormProps {
   setRouterScoutMulticast?: (val: boolean) => void;
   routerScoutGossip?: boolean;
   setRouterScoutGossip?: (val: boolean) => void;
-  routerConnectLocators: string[];
-  addRouterConnectLocator: () => void;
-  updateRouterConnectLocator: (index: number, val: string) => void;
-  removeRouterConnectLocator: (index: number) => void;
+  upstreamEndpoints?: RouterUpstreamEndpoint[];
+  addUpstreamEndpoint?: () => void;
+  updateUpstreamEndpoint?: (id: string, updates: Partial<RouterUpstreamEndpoint>) => void;
+  removeUpstreamEndpoint?: (id: string) => void;
+  // Legacy / fallback props
+  routerConnectLocators?: string[];
+  addRouterConnectLocator?: () => void;
+  updateRouterConnectLocator?: (index: number, val: string) => void;
+  removeRouterConnectLocator?: (index: number) => void;
   username?: string;
   setUsername?: (val: string) => void;
   password?: string;
@@ -61,7 +73,11 @@ export const RouterConfigForm: React.FC<RouterConfigFormProps> = ({
   addListenEndpoint,
   updateListenEndpoint,
   removeListenEndpoint,
-  routerConnectLocators,
+  upstreamEndpoints,
+  addUpstreamEndpoint,
+  updateUpstreamEndpoint,
+  removeUpstreamEndpoint,
+  routerConnectLocators = [],
   addRouterConnectLocator,
   updateRouterConnectLocator,
   removeRouterConnectLocator,
@@ -71,6 +87,50 @@ export const RouterConfigForm: React.FC<RouterConfigFormProps> = ({
   setPassword,
 }) => {
   const activeMdnsHost = useActiveMdnsHost();
+
+  const currentUpstreams: RouterUpstreamEndpoint[] =
+    upstreamEndpoints !== undefined
+      ? upstreamEndpoints
+      : routerConnectLocators.map((loc, idx) => ({
+          id: `up-${idx}`,
+          locator: loc,
+          username: idx === 0 ? username : '',
+          password: idx === 0 ? password : '',
+        }));
+
+  const handleAddUpstream = () => {
+    if (addUpstreamEndpoint) {
+      addUpstreamEndpoint();
+    } else if (addRouterConnectLocator) {
+      addRouterConnectLocator();
+    }
+  };
+
+  const handleUpdateUpstream = (
+    id: string,
+    idx: number,
+    updates: Partial<RouterUpstreamEndpoint>
+  ) => {
+    if (updateUpstreamEndpoint) {
+      updateUpstreamEndpoint(id, updates);
+    } else {
+      if (updateRouterConnectLocator && updates.locator !== undefined) {
+        updateRouterConnectLocator(idx, updates.locator);
+      }
+      if (idx === 0) {
+        if (setUsername && updates.username !== undefined) setUsername(updates.username);
+        if (setPassword && updates.password !== undefined) setPassword(updates.password);
+      }
+    }
+  };
+
+  const handleRemoveUpstream = (id: string, idx: number) => {
+    if (removeUpstreamEndpoint) {
+      removeUpstreamEndpoint(id);
+    } else if (removeRouterConnectLocator) {
+      removeRouterConnectLocator(idx);
+    }
+  };
   return (
     <div className="space-y-4 animate-in fade-in duration-200">
       {/* Profile Name */}
@@ -236,14 +296,15 @@ export const RouterConfigForm: React.FC<RouterConfigFormProps> = ({
       {/* Upstream Router Connect Locators */}
       <div className="space-y-2 pt-2 border-t">
         <div className="flex items-center justify-between">
-          <Label className="text-xs font-semibold">
-            Upstream Routers (Hierarchical Mesh)
+          <Label className="text-xs font-semibold flex items-center gap-1.5">
+            <Radio className="w-3.5 h-3.5 text-sky-500" />
+            <span>Upstream Routers ({currentUpstreams.length})</span>
           </Label>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={addRouterConnectLocator}
+            onClick={handleAddUpstream}
             className="h-7 text-xs gap-1"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -251,57 +312,76 @@ export const RouterConfigForm: React.FC<RouterConfigFormProps> = ({
           </Button>
         </div>
 
-        {routerConnectLocators.length === 0 ? (
+        {currentUpstreams.length === 0 ? (
           <div className="p-2 rounded-md bg-muted/20 border border-dashed text-[11px] text-muted-foreground">
             Standalone root router (no upstream router links).
           </div>
         ) : (
-          <div className="space-y-1.5">
-            {routerConnectLocators.map((loc, idx) => (
-              <div key={idx} className="flex items-center gap-2">
-                <Input
-                  value={loc}
-                  onChange={(e) => updateRouterConnectLocator(idx, e.target.value)}
-                  placeholder={`tcp/${activeMdnsHost}:7447`}
-                  className="h-8 text-xs font-mono bg-background flex-1"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="iconSm"
-                  onClick={() => removeRouterConnectLocator(idx)}
-                  className="h-8 w-8 text-destructive hover:bg-destructive/10 shrink-0"
-                  title="Remove upstream locator"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </Button>
+          <div className="space-y-2.5">
+            {currentUpstreams.map((ep, idx) => (
+              <div
+                key={ep.id || idx}
+                className="p-3 rounded-lg border bg-card/60 space-y-2 relative group"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-medium text-muted-foreground">
+                    Upstream #{idx + 1}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="iconSm"
+                    onClick={() => handleRemoveUpstream(ep.id, idx)}
+                    className="h-6 w-6 text-destructive hover:bg-destructive/10"
+                    title="Remove upstream router"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+
+                {/* Locator input */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] font-medium text-muted-foreground">
+                    Locator
+                  </Label>
+                  <Input
+                    value={ep.locator}
+                    onChange={(e) =>
+                      handleUpdateUpstream(ep.id, idx, { locator: e.target.value })
+                    }
+                    placeholder={`tcp/${activeMdnsHost}:7447`}
+                    className="h-8 text-xs font-mono bg-background"
+                  />
+                </div>
+
+                {/* Per-upstream credentials */}
+                <div className="space-y-1 pt-1">
+                  <Label className="text-[10px] font-medium text-muted-foreground flex items-center gap-1">
+                    <Shield className="w-3 h-3 text-muted-foreground" />
+                    <span>Authentication (Optional)</span>
+                  </Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      value={ep.username || ''}
+                      onChange={(e) =>
+                        handleUpdateUpstream(ep.id, idx, { username: e.target.value })
+                      }
+                      placeholder="Username"
+                      className="h-8 text-xs bg-background"
+                    />
+                    <Input
+                      type="password"
+                      value={ep.password || ''}
+                      onChange={(e) =>
+                        handleUpdateUpstream(ep.id, idx, { password: e.target.value })
+                      }
+                      placeholder="Password / Token"
+                      className="h-8 text-xs bg-background"
+                    />
+                  </div>
+                </div>
               </div>
             ))}
-          </div>
-        )}
-
-        {/* Upstream Router Authentication */}
-        {setUsername && setPassword && (
-          <div className="space-y-2 pt-2 border-t border-border/50">
-            <Label className="text-xs font-semibold flex items-center gap-1.5">
-              <Shield className="w-3.5 h-3.5 text-muted-foreground" />
-              <span>Upstream Authentication (Optional)</span>
-            </Label>
-            <div className="grid grid-cols-2 gap-2">
-              <Input
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Username"
-                className="h-8 text-xs bg-background"
-              />
-              <Input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Password / Token"
-                className="h-8 text-xs bg-background"
-              />
-            </div>
           </div>
         )}
       </div>

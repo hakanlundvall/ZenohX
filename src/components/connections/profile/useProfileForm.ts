@@ -34,7 +34,7 @@ import {
   type ConnectionPreset,
 } from '../../../lib/tls';
 import { formatFriendlyError } from '../../../lib/errorUtils';
-import type { RouterListenEndpoint } from './RouterConfigForm';
+import type { RouterListenEndpoint, RouterUpstreamEndpoint } from './RouterConfigForm';
 
 export interface UseProfileFormProps {
   isOpen: boolean;
@@ -90,6 +90,7 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
   const [routerScoutMulticast, setRouterScoutMulticast] = useState<boolean>(true);
   const [routerScoutGossip, setRouterScoutGossip] = useState<boolean>(true);
   const [routerConnectLocators, setRouterConnectLocators] = useState<string[]>([]);
+  const [routerUpstreamEndpoints, setRouterUpstreamEndpoints] = useState<RouterUpstreamEndpoint[]>([]);
 
   // Auth State
   const [username, setUsername] = useState<string>('');
@@ -174,10 +175,27 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
         }
         setRouterName(profile.name || 'Local Router');
         setRouterScoutMulticast(profile.scout_multicast ?? true);
-        setRouterConnectLocators(profile.connect_locators ? [...profile.connect_locators] : []);
+
+        const savedUpstreams = profile.custom_config && (profile.custom_config as any).upstream_endpoints;
+        if (Array.isArray(savedUpstreams) && savedUpstreams.length > 0) {
+          setRouterUpstreamEndpoints(savedUpstreams);
+          setRouterConnectLocators(savedUpstreams.map((u: RouterUpstreamEndpoint) => u.locator));
+        } else if (profile.connect_locators && profile.connect_locators.length > 0) {
+          const mapped: RouterUpstreamEndpoint[] = profile.connect_locators.map((loc, idx) => ({
+            id: `up-${idx + 1}-${Date.now()}`,
+            locator: loc,
+            username: idx === 0 ? (profile.user_auth?.username || '') : '',
+            password: idx === 0 ? (profile.user_auth?.password || '') : '',
+          }));
+          setRouterUpstreamEndpoints(mapped);
+          setRouterConnectLocators([...profile.connect_locators]);
+        } else {
+          setRouterUpstreamEndpoints([]);
+          setRouterConnectLocators([]);
+        }
 
         if (profile.custom_config && Object.keys(profile.custom_config).length > 0) {
-          const { mode: _m, id: _id, connect: _c, listen: _l, scouting: _s, transport: _t, ...restOverrides } = profile.custom_config as any;
+          const { mode: _m, id: _id, connect: _c, listen: _l, scouting: _s, transport: _t, upstream_endpoints: _ue, ...restOverrides } = profile.custom_config as any;
           if (Object.keys(restOverrides).length > 0) {
             setCustomConfigText(JSON.stringify(restOverrides, null, 2));
           } else {
@@ -209,6 +227,7 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
         setRouterScoutMulticast(true);
         setRouterScoutGossip(true);
         setRouterConnectLocators([]);
+        setRouterUpstreamEndpoints([]);
 
         setUsername('');
         setPassword('');
@@ -287,9 +306,45 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
     );
   };
 
-  // Router Connect Locators Helpers
+  // Router Upstream Endpoints Helpers
+  const addRouterUpstreamEndpoint = () => {
+    setRouterUpstreamEndpoints((prev) => {
+      const next = [
+        ...prev,
+        {
+          id: `up-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          locator: '',
+          username: '',
+          password: '',
+        },
+      ];
+      setRouterConnectLocators(next.map((u) => u.locator));
+      return next;
+    });
+  };
+
+  const updateRouterUpstreamEndpoint = (
+    id: string,
+    updates: Partial<RouterUpstreamEndpoint>
+  ) => {
+    setRouterUpstreamEndpoints((prev) => {
+      const next = prev.map((ep) => (ep.id === id ? { ...ep, ...updates } : ep));
+      setRouterConnectLocators(next.map((u) => u.locator));
+      return next;
+    });
+  };
+
+  const removeRouterUpstreamEndpoint = (id: string) => {
+    setRouterUpstreamEndpoints((prev) => {
+      const next = prev.filter((ep) => ep.id !== id);
+      setRouterConnectLocators(next.map((u) => u.locator));
+      return next;
+    });
+  };
+
+  // Router Connect Locators Helpers (Legacy / Fallback)
   const addRouterConnectLocator = () => {
-    setRouterConnectLocators((prev) => [...prev, '']);
+    addRouterUpstreamEndpoint();
   };
 
   const updateRouterConnectLocator = (index: number, val: string) => {
@@ -298,10 +353,25 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
       next[index] = val;
       return next;
     });
+    setRouterUpstreamEndpoints((prev) => {
+      if (index < prev.length) {
+        return prev.map((ep, i) => (i === index ? { ...ep, locator: val } : ep));
+      }
+      return [
+        ...prev,
+        {
+          id: `up-${Date.now()}-${index}`,
+          locator: val,
+          username: '',
+          password: '',
+        },
+      ];
+    });
   };
 
   const removeRouterConnectLocator = (index: number) => {
     setRouterConnectLocators((prev) => prev.filter((_, i) => i !== index));
+    setRouterUpstreamEndpoints((prev) => prev.filter((_, i) => i !== index));
   };
 
   // Form Validation
@@ -532,19 +602,50 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
         tlsOnly,
       });
 
+      const activeUpstreams: RouterUpstreamEndpoint[] =
+        routerUpstreamEndpoints.length > 0
+          ? routerUpstreamEndpoints
+          : routerConnectLocators.map((l, idx) => ({
+              id: `up-${idx}`,
+              locator: l,
+              username: idx === 0 ? username : '',
+              password: idx === 0 ? password : '',
+            }));
+
+      const finalRouterConnectLocators = activeUpstreams
+        .map((u) => u.locator.trim())
+        .filter(Boolean);
+
+      const primaryUpstreamAuth = activeUpstreams.find(
+        (u) => (u.username && u.username.trim()) || (u.password && u.password.trim())
+      );
+
+      const routerUserAuth: UserAuth | null = primaryUpstreamAuth
+        ? {
+            username: primaryUpstreamAuth.username?.trim() || undefined,
+            password: primaryUpstreamAuth.password?.trim() || '',
+            token: token.trim() || undefined,
+          }
+        : userAuth;
+
+      const mergedCustomConfig: Record<string, unknown> = {
+        ...(customConfigObj || {}),
+        upstream_endpoints: activeUpstreams,
+      };
+
       return {
         profile_id: profile?.id,
         id: activeZid || profile?.id,
         zid: activeZid,
         mode: 'router',
-        connect_locators: routerConnectLocators.map((l) => l.trim()).filter(Boolean),
+        connect_locators: finalRouterConnectLocators,
         listen_locators: resolvedRouterListenLocs,
         scout_multicast: routerScoutMulticast,
         scout_gossip: routerScoutGossip,
         reconnect_retry: reconnectRetryConfig,
-        user_auth: userAuth,
+        user_auth: routerUserAuth,
         tls_config: tlsConfig,
-        custom_config: customConfigObj,
+        custom_config: mergedCustomConfig,
       };
     }
 
@@ -622,6 +723,15 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
         tlsOnly,
       });
 
+      let customConfigObj: Record<string, unknown> | null = null;
+      if (customConfigText.trim()) {
+        try {
+          customConfigObj = JSON.parse(customConfigText);
+        } catch {
+          // Handled by validate()
+        }
+      }
+
       if (preset === 'client') {
         finalName = clientName.trim();
         finalMode = 'client';
@@ -668,7 +778,33 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
           .map((ep) => buildLocator(ep.protocol, ep.host.trim() || (ep.protocol === 'unix' ? '/tmp/zenoh.sock' : '0.0.0.0'), ep.port.trim()))
           .filter(Boolean);
         finalListenLocators = listenLocs.length > 0 ? listenLocs : ['tcp/0.0.0.0:7447'];
-        finalConnectLocators = routerConnectLocators.map((l) => l.trim()).filter(Boolean);
+
+        const activeUpstreams: RouterUpstreamEndpoint[] =
+          routerUpstreamEndpoints.length > 0
+            ? routerUpstreamEndpoints
+            : routerConnectLocators.map((l, idx) => ({
+                id: `up-${idx}`,
+                locator: l,
+                username: idx === 0 ? username : '',
+                password: idx === 0 ? password : '',
+              }));
+
+        finalConnectLocators = activeUpstreams
+          .map((u) => u.locator.trim())
+          .filter(Boolean);
+
+        const primaryUpstreamAuth = activeUpstreams.find(
+          (u) => (u.username && u.username.trim()) || (u.password && u.password.trim())
+        );
+
+        if (primaryUpstreamAuth) {
+          userAuth = {
+            username: primaryUpstreamAuth.username?.trim() || undefined,
+            password: primaryUpstreamAuth.password?.trim() || '',
+            token: token.trim() || undefined,
+          };
+        }
+
         const hasTlsEndpoint = routerListenEndpoints.some((ep) => ep.protocol === 'tls' || ep.protocol === 'wss');
         finalTlsConfig = resolveTlsConfig({
           enableTls: hasTlsEndpoint || enableTls || useCustomTls,
@@ -678,15 +814,11 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
           clientKey,
           tlsOnly,
         });
-      }
 
-      let customConfigObj: Record<string, unknown> | null = null;
-      if (customConfigText.trim()) {
-        try {
-          customConfigObj = JSON.parse(customConfigText);
-        } catch {
-          // Handled by validate()
-        }
+        customConfigObj = {
+          ...(customConfigObj || {}),
+          upstream_endpoints: activeUpstreams,
+        };
       }
 
       // Generate the full live JSON5 configuration object for this profile
@@ -708,6 +840,10 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
         finalCustomConfig = JSON.parse(fullJson5Str);
       } catch {
         // Fallback
+      }
+
+      if (finalCustomConfig && customConfigObj && (customConfigObj as any).upstream_endpoints) {
+        finalCustomConfig.upstream_endpoints = (customConfigObj as any).upstream_endpoints;
       }
 
       const now = Date.now();
@@ -857,6 +993,11 @@ export function useProfileForm({ isOpen, profile, onClose, onSaved }: UseProfile
     addRouterConnectLocator,
     updateRouterConnectLocator,
     removeRouterConnectLocator,
+    routerUpstreamEndpoints,
+    setRouterUpstreamEndpoints,
+    addRouterUpstreamEndpoint,
+    updateRouterUpstreamEndpoint,
+    removeRouterUpstreamEndpoint,
     username,
     setUsername,
     password,
