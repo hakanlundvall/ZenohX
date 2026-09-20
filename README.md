@@ -285,6 +285,9 @@ In your client's MCP configuration settings:
 | `zenohx://messages/recent` | Recent ingested message log stream. |
 | `zenohx://topology` | Live topology graph representing nodes and transport links. |
 
+> [!NOTE]
+> For a detailed guide on using these tools, including input schemas and examples, see the [**ZenohX MCP API Documentation**](docs/api/README.md).
+
 ---
 
 ## 🤝 Contributing & Community
