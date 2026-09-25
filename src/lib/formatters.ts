@@ -23,6 +23,7 @@ import type protobuf from 'protobufjs';
 import type { EncodingType } from '../types/zenoh';
 import { encodeProtobufPayload, decodeProtobufPayload } from './protobufEngine';
 import { useProtoStore } from '../stores/protoStore';
+import { useSchemaDiscoveryStore } from '../stores/schemaDiscoveryStore';
 
 // ============================================================================
 // Types & Interfaces
@@ -47,6 +48,23 @@ export interface ProtoFormatOptions {
   protoId?: string;
   root?: protobuf.Root;
   indent?: number;
+}
+
+/**
+ * Finds the Protobuf message type (and its compiled root, when known) for a key.
+ * A manual topic mapping wins; otherwise the schema advertised by the publisher
+ * on `<key>/@schema` is used once it has been discovered.
+ */
+export function resolveProtoDecoderForKey(
+  keyExpr: string | undefined
+): { typeName: string; root?: protobuf.Root } | null {
+  if (!keyExpr) return null;
+  const mapping = useProtoStore.getState().findMappingForKey(keyExpr);
+  if (mapping) {
+    const root = mapping.protoId ? useProtoStore.getState().getCompiledRoot(mapping.protoId) : null;
+    return { typeName: mapping.messageTypeName, root: root || undefined };
+  }
+  return useSchemaDiscoveryStore.getState().getDecoder(keyExpr);
 }
 
 // ============================================================================
@@ -264,12 +282,10 @@ export function tryFormatProtobuf(
   let root = options?.root;
 
   if (!typeName && options?.keyExpr) {
-    const mapping = useProtoStore.getState().findMappingForKey(options.keyExpr);
-    if (mapping) {
-      typeName = mapping.messageTypeName;
-      if (!root && mapping.protoId) {
-        root = useProtoStore.getState().getCompiledRoot(mapping.protoId) || undefined;
-      }
+    const decoder = resolveProtoDecoderForKey(options.keyExpr);
+    if (decoder) {
+      typeName = decoder.typeName;
+      root = root || decoder.root;
     }
   }
 
@@ -439,12 +455,10 @@ export function encodePayload(
       let root = options?.root;
 
       if (!typeName && options?.keyExpr) {
-        const mapping = useProtoStore.getState().findMappingForKey(options.keyExpr);
-        if (mapping) {
-          typeName = mapping.messageTypeName;
-          if (!root && mapping.protoId) {
-            root = useProtoStore.getState().getCompiledRoot(mapping.protoId) || undefined;
-          }
+        const decoder = resolveProtoDecoderForKey(options.keyExpr);
+        if (decoder) {
+          typeName = decoder.typeName;
+          root = root || decoder.root;
         }
       }
 
@@ -523,11 +537,8 @@ export function detectEncoding(
   payload: Uint8Array | number[] | null | undefined,
   options?: { keyExpr?: string }
 ): EncodingType {
-  if (options?.keyExpr) {
-    const mapping = useProtoStore.getState().findMappingForKey(options.keyExpr);
-    if (mapping) {
-      return 'protobuf';
-    }
+  if (resolveProtoDecoderForKey(options?.keyExpr)) {
+    return 'protobuf';
   }
 
   const bytes = bytesToUint8Array(payload);
@@ -599,7 +610,8 @@ export function normalizeEncoding(
   keyExpr?: string
 ): EncodingType {
   if (rawEncoding) {
-    const lower = rawEncoding.toLowerCase().trim();
+    // Zenoh encodings may carry a schema suffix, e.g. "application/protobuf;pkg.Msg".
+    const lower = rawEncoding.split(';', 1)[0].toLowerCase().trim();
     if (lower === 'json' || lower === 'application/json') return 'json';
     if (lower === 'cbor' || lower === 'application/cbor') return 'cbor';
     if (
@@ -613,10 +625,7 @@ export function normalizeEncoding(
     if (lower === 'text' || lower === 'text/plain' || lower === 'string') return 'text';
     if (lower === 'hex') return 'raw';
     if (lower === 'raw' || lower === 'bytes' || lower === 'zenoh/bytes' || lower === 'application/octet-stream') {
-      if (keyExpr) {
-        const mapping = useProtoStore.getState().findMappingForKey(keyExpr);
-        if (mapping) return 'protobuf';
-      }
+      if (resolveProtoDecoderForKey(keyExpr)) return 'protobuf';
       if (payload) {
         const bytes = bytesToUint8Array(payload);
         if (bytes.length > 0) {
@@ -626,10 +635,7 @@ export function normalizeEncoding(
       return 'raw';
     }
   }
-  if (keyExpr) {
-    const mapping = useProtoStore.getState().findMappingForKey(keyExpr);
-    if (mapping) return 'protobuf';
-  }
+  if (resolveProtoDecoderForKey(keyExpr)) return 'protobuf';
   return detectEncoding(payload, { keyExpr });
 }
 

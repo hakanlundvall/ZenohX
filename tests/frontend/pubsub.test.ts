@@ -945,3 +945,73 @@ describe('Pub/Sub Workspace Store Integration', () => {
 
 
 
+
+describe('Protobuf schema discovery on incoming samples', () => {
+  test('a protobuf sample triggers one <key>/@schema lookup and then decodes', async () => {
+    const { useSchemaDiscoveryStore } = await import('../../src/stores/schemaDiscoveryStore');
+    const { tryFormatProtobuf } = await import('../../src/lib/formatters');
+    const protobuf = (await import('protobufjs')).default;
+    const descriptor = (await import('protobufjs/ext/descriptor.js')).default;
+
+    // Descriptor set for `demo.Reading { double value = 1; }`
+    const root = protobuf.parse('syntax = "proto3"; package demo; message Reading { double value = 1; }', {
+      keepCase: true,
+    }).root;
+    const descriptorSet = descriptor.FileDescriptorSet.encode(root.toDescriptor('proto3')).finish();
+    const Reading = root.lookupType('demo.Reading');
+    const sampleBytes = Array.from(Reading.encode({ value: 21.5 }).finish());
+
+    const queried: string[] = [];
+    const replyTo = (selector: string, payload: Uint8Array | number[]) => [
+      { session_id: 'sess-pb', key_expr: selector, payload: Array.from(payload), encoding: '', latency_ms: 1, timestamp: 0, is_err: false },
+    ];
+    mockInvokeHandler = async (cmd, args) => {
+      if (cmd !== 'query_get') return undefined;
+      const selector = String(args?.selector);
+      queried.push(selector);
+      if (selector === 'demo/sensor/@schema') {
+        return replyTo(selector, new TextEncoder().encode(JSON.stringify({ type_name: 'demo.Reading', schema_digest: 'sha256:feed' })));
+      }
+      if (selector === 'schemas/feed') return replyTo(selector, descriptorSet);
+      return [];
+    };
+
+    let capturedHandler: ((event: { payload: unknown }) => void) | null = null;
+    // @ts-expect-error Mocking tauri internals
+    globalThis.window.__TAURI_INTERNALS__.invoke = async (cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'plugin:event|listen') {
+        capturedHandler = args?.handler as (event: { payload: unknown }) => void;
+        return 1;
+      }
+      return mockInvokeHandler(cmd, args);
+    };
+
+    useSchemaDiscoveryStore.getState().clear();
+    useMessageStore.getState().cleanupListener();
+    useMessageStore.setState({ messages: [], subscriptions: [], isPaused: false });
+    await useMessageStore.getState().initListener();
+    assert.ok(capturedHandler);
+
+    const sample = {
+      session_id: 'sess-pb',
+      key_expr: 'demo/sensor',
+      payload: sampleBytes,
+      encoding: 'application/protobuf',
+      kind: 'put',
+      timestamp: Date.now(),
+    };
+    capturedHandler!({ payload: [sample, sample] });
+
+    const entry = await useSchemaDiscoveryStore.getState().resolve('sess-pb', 'demo/sensor');
+    assert.equal(entry.status, 'resolved', entry.error);
+    assert.deepEqual(queried, ['demo/sensor/@schema', 'schemas/feed']);
+
+    const [msg] = useMessageStore.getState().messages;
+    assert.equal(msg.encoding, 'protobuf');
+    const decoded = tryFormatProtobuf(msg.payload, { keyExpr: msg.keyExpr });
+    assert.equal(decoded.success, true, decoded.error);
+    assert.deepEqual(decoded.data, { value: 21.5 });
+
+    useMessageStore.getState().cleanupListener();
+  });
+});

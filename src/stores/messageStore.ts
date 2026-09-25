@@ -47,6 +47,7 @@ import { normalizeEncoding, encodePayload } from '../lib/formatters';
 import { formatFriendlyError } from '../lib/errorUtils';
 import { useConnectionStore } from './connectionStore';
 import { useTrafficStore } from './trafficStore';
+import { isProtobufEncoding, useSchemaDiscoveryStore } from './schemaDiscoveryStore';
 import { useTopologyStore } from './topologyStore';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
@@ -299,6 +300,12 @@ export const useMessageStore = create<MessageState>((set, get) => ({
               attachment: sample.attachment || undefined,
             };
             newItems.push(item);
+
+            // Protobuf samples carry no schema; look up the one the publisher
+            // advertises on `<key>/@schema` the first time a key is seen.
+            if (isProtobufEncoding(sample.encoding)) {
+              useSchemaDiscoveryStore.getState().request(sample.session_id, sample.key_expr);
+            }
 
             useTrafficStore.getState().recordEvent({
               sessionId: sample.session_id,

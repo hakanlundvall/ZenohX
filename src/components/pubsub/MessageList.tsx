@@ -31,6 +31,7 @@ import { Input } from '../ui/input';
 import { Badge } from '../ui/badge';
 import { useMessageStore } from '../../stores/messageStore';
 import { useConnectionStore } from '../../stores/connectionStore';
+import { useSchemaDiscoveryStore } from '../../stores/schemaDiscoveryStore';
 import {
   formatByteSize,
   formatTimeWithMs,
@@ -67,6 +68,8 @@ export const MessageList: React.FC<MessageListProps> = ({
   } = useMessageStore();
 
   const { getActiveSessionId, selectedProfileId, profiles, sessionToProfile } = useConnectionStore();
+  // Re-render previews once a topic's Protobuf schema has been discovered.
+  useSchemaDiscoveryStore((s) => s.entries);
 
   const activeSessionId = propSessionId || getActiveSessionId(propProfileId || selectedProfileId || undefined);
 
@@ -388,7 +391,7 @@ export const MessageList: React.FC<MessageListProps> = ({
               const isDelete = item.kind === 'delete';
               const byteSize = item.payload?.length || 0;
               const effectiveEncoding = normalizeEncoding(item.encoding, item.payload);
-              const snippet = getPayloadSnippet(item.payload, effectiveEncoding);
+              const snippet = getPayloadSnippet(item.payload, effectiveEncoding, 120, { keyExpr: item.keyExpr });
               const effectiveProfileId = item.profileId || propProfileId || selectedProfileId;
               const { color: colorTag, matchedSub } = getTopicColorTag(
                 subscriptions,

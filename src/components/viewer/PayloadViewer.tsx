@@ -26,6 +26,7 @@ import {
   WrapText,
   ListTree,
   Boxes,
+  RefreshCw,
 } from 'lucide-react';
 import {
   bytesToUint8Array,
@@ -37,6 +38,8 @@ import {
 } from '../../lib/formatters';
 import { decodeProtobufPayload } from '../../lib/protobufEngine';
 import { useProtoStore } from '../../stores/protoStore';
+import { useSchemaDiscoveryStore } from '../../stores/schemaDiscoveryStore';
+import { useConnectionStore } from '../../stores/connectionStore';
 import {
   Select,
   SelectContent,
@@ -383,29 +386,45 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
   const getCompiledRoot = useProtoStore((s) => s.getCompiledRoot);
   const getGlobalRoot = useProtoStore((s) => s.getGlobalRoot);
 
+  // Schema advertised by the publisher on `<keyExpr>/@schema`, once discovered
+  const discoveryEntry = useSchemaDiscoveryStore((s) => (keyExpr ? s.entries[keyExpr] : undefined));
+  const discovered = useMemo(
+    () => (keyExpr && discoveryEntry?.status === 'resolved'
+      ? useSchemaDiscoveryStore.getState().getDecoder(keyExpr)
+      : null),
+    [keyExpr, discoveryEntry]
+  );
+
   // All available message types
   const allMessageTypes = useMemo(() => {
-    return getAllMessageTypes();
-  }, [schemas, getAllMessageTypes]);
+    const types = getAllMessageTypes();
+    if (discovered && !types.some((t) => t.typeName === discovered.typeName)) {
+      types.push({ protoId: '@schema', protoName: 'Discovered (@schema)', typeName: discovered.typeName });
+    }
+    return types;
+  }, [schemas, getAllMessageTypes, discovered]);
 
-  // Find matching topic mapping if keyExpr is provided
+  // Find matching topic mapping if keyExpr is provided; a manual mapping wins over a discovered schema
+  const manualMapping = useMemo(
+    () => (keyExpr ? findMappingForKey(keyExpr) : undefined),
+    [keyExpr, mappings, findMappingForKey]
+  );
   const mappedType = useMemo(() => {
     if (protoTypeName) return protoTypeName;
-    if (!keyExpr) return undefined;
-    const mapping = findMappingForKey(keyExpr);
-    return mapping?.messageTypeName;
-  }, [keyExpr, protoTypeName, mappings, findMappingForKey]);
+    return manualMapping?.messageTypeName ?? discovered?.typeName;
+  }, [protoTypeName, manualMapping, discovered]);
 
   // Selected proto message type state
   const [selectedProtoType, setSelectedProtoType] = useState<string>(() => {
     if (protoTypeName) return protoTypeName;
     if (mappedType) return mappedType;
-    const all = getAllMessageTypes();
+    const all = allMessageTypes;
     return all.length > 0 ? all[0].typeName : '';
   });
 
   const prevKeyExprRef = useRef<string | undefined>(keyExpr);
   const prevProtoTypePropRef = useRef<string | undefined | null>(protoTypeName);
+  const prevMappedTypeRef = useRef<string | undefined>(mappedType);
 
   // Sync selectedProtoType on protoTypeName prop change, keyExpr change, mapping change, or schema reload
   useEffect(() => {
@@ -415,8 +434,9 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
       return;
     }
 
-    if (prevKeyExprRef.current !== keyExpr) {
+    if (prevKeyExprRef.current !== keyExpr || prevMappedTypeRef.current !== mappedType) {
       prevKeyExprRef.current = keyExpr;
+      prevMappedTypeRef.current = mappedType;
       if (mappedType) {
         setSelectedProtoType(mappedType);
         return;
@@ -472,6 +492,22 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
     }
   }, [encoding]);
 
+  const discoveryStatusMessage = useMemo(() => {
+    if (!keyExpr || !discoveryEntry || manualMapping) return undefined;
+    if (discoveryEntry.status === 'pending') return `Fetching schema from '${keyExpr}/@schema'…`;
+    if (discoveryEntry.status === 'resolved') return undefined;
+    return discoveryEntry.error;
+  }, [keyExpr, discoveryEntry, manualMapping]);
+
+  const canRetryDiscovery =
+    !!keyExpr && !manualMapping && (discoveryEntry?.status === 'not_found' || discoveryEntry?.status === 'error');
+  const retryDiscovery = () => {
+    const sessionId = useConnectionStore.getState().getActiveSessionId();
+    if (keyExpr && sessionId) {
+      void useSchemaDiscoveryStore.getState().retry(sessionId, keyExpr);
+    }
+  };
+
   // Decode content based on active tab
   const tabData = useMemo(() => {
     if (byteCount === 0 && activeTab !== 'protobuf') {
@@ -498,7 +534,7 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
       }
 
       case 'protobuf': {
-        if (schemas.length === 0) {
+        if (schemas.length === 0 && !discovered) {
           if (byteCount === 0) {
             return {
               text: '{}',
@@ -509,7 +545,8 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
           return {
             text: toHexDump(bytes),
             parsedJson: null,
-            error: 'No Protobuf schemas registered. Open Schema Manager to add .proto schemas.',
+            error: discoveryStatusMessage
+              ?? 'No Protobuf schemas registered. Open Schema Manager to add .proto schemas.',
           };
         }
 
@@ -524,12 +561,16 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
           return {
             text: toHexDump(bytes),
             parsedJson: null,
-            error: 'No Protobuf message type selected or mapped for this topic.',
+            error: discoveryStatusMessage ?? 'No Protobuf message type selected or mapped for this topic.',
           };
         }
 
+        const useDiscoveredRoot =
+          discovered && !manualMapping && selectedProtoType === discovered.typeName;
         const matchedSchema = schemas.find((s) => s.messageTypes.includes(selectedProtoType));
-        const root = (matchedSchema ? getCompiledRoot(matchedSchema.id) : null) || getGlobalRoot();
+        const root = useDiscoveredRoot
+          ? discovered.root
+          : (matchedSchema ? getCompiledRoot(matchedSchema.id) : null) || discovered?.root || getGlobalRoot();
 
         try {
           const decoded = decodeProtobufPayload(root, selectedProtoType, bytes);
@@ -580,7 +621,18 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
       default:
         return { text: '', parsedJson: null, error: null };
     }
-  }, [bytes, byteCount, activeTab, selectedProtoType, schemas, getCompiledRoot, getGlobalRoot]);
+  }, [
+    bytes,
+    byteCount,
+    activeTab,
+    selectedProtoType,
+    schemas,
+    getCompiledRoot,
+    getGlobalRoot,
+    discovered,
+    manualMapping,
+    discoveryStatusMessage,
+  ]);
 
   // Copy handler
   const handleCopy = useCallback(() => {
@@ -636,7 +688,7 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
             {/* Protobuf Controls: Message Type Selector & Schema Manager Button */}
             {activeTab === 'protobuf' && (
               <div className="flex items-center gap-1.5">
-                {schemas.length === 0 ? (
+                {schemas.length === 0 && !discovered ? (
                   <span className="text-[11px] text-amber-500 font-medium px-1" title="Register schemas in Settings > Protobuf Manager">
                     No schemas registered (see Settings &gt; Protobuf)
                   </span>
@@ -649,6 +701,16 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
                       <SelectValue placeholder="Select proto type..." />
                     </SelectTrigger>
                     <SelectContent>
+                      {discovered && !schemas.some((sc) => sc.messageTypes.includes(discovered.typeName)) && (
+                        <SelectGroup>
+                          <SelectLabel className="text-[10px] font-semibold text-muted-foreground uppercase">
+                            Discovered (@schema)
+                          </SelectLabel>
+                          <SelectItem value={discovered.typeName} className="text-xs font-mono">
+                            {discovered.typeName}
+                          </SelectItem>
+                        </SelectGroup>
+                      )}
                       {schemas.map((schema) => {
                         const types = schema.messageTypes || [];
                         if (types.length === 0) return null;
@@ -748,6 +810,17 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
           <div className="flex items-center gap-1.5 border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive shrink-0">
             <AlertCircle className="w-3.5 h-3.5 shrink-0" />
             <span className="truncate">{tabData.error}</span>
+            {activeTab === 'protobuf' && canRetryDiscovery && (
+              <button
+                type="button"
+                onClick={retryDiscovery}
+                className="ml-auto flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 hover:bg-destructive/20"
+                title={`Query '${keyExpr}/@schema' again`}
+              >
+                <RefreshCw className="w-3 h-3" />
+                Retry
+              </button>
+            )}
           </div>
         )}
 
