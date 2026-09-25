@@ -17,6 +17,7 @@ pub mod db;
 pub mod ipc;
 pub mod mcp;
 pub mod mdns;
+pub mod web;
 pub mod zenoh;
 
 use commands::*;
@@ -37,6 +38,15 @@ pub struct AppState {
 pub fn run() {
     let session_manager = SessionManager::new();
     let sm_clone = session_manager.clone();
+
+    let args: Vec<String> = std::env::args().collect();
+    let web_config = match web::WebConfig::from_args_and_env(&args, |k| std::env::var(k).ok()) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("[web] {e}");
+            std::process::exit(2);
+        }
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -92,6 +102,25 @@ pub fn run() {
 
             let app_state_arc = std::sync::Arc::new(app_state);
             crate::ipc::server::start_ipc_server(app.handle().clone(), app_state_arc);
+
+            if let Some(web_config) = &web_config {
+                match web::start(app.handle(), web_config) {
+                    Ok(url) => {
+                        println!("ZenohX web access: open {url}");
+                        // Also written to a file: Windows release builds have no console.
+                        let _ = std::fs::write(data_dir.join("web-url.txt"), format!("{url}\n"));
+                        if !web_config.keep_window {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.hide();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[web] {e}");
+                        return Err(e.into());
+                    }
+                }
+            }
 
 
             let sm = sm_clone.clone();

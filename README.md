@@ -57,6 +57,7 @@
   - **Automatic Topic-to-Schema Mapping**: Bind Zenoh key expression patterns (e.g. `robot/sensors/**`) directly to target Protobuf message decoders.
   - **Real-Time JSON ↔ Protobuf Codec**: Encode structured JSON payloads to binary Protobuf on publish/query and decode incoming binary wire payloads back to formatted JSON and interactive tree views.
   - **1-Click Sample Payload Generator**: Scaffold valid mock JSON templates from any compiled Protobuf message descriptor.
+- **🌐 Web Access:** Run `zenohx --web` to use the full UI from any browser, protected by an access token (see [Web Access](#-web-access-use-zenohx-from-a-browser)).
 - **🔍 Distributed Query & RPC Simulator:**
   - Send queries across Zenoh routers and peers with latency tracking and multi-reply timeline.
   - **Dynamic JavaScript Script Execution**: Run custom JS logic to dynamically compute replies from URL query parameters (`query.params`, `query.keyExpr`, `query.payload`) alongside static payloads.
@@ -156,6 +157,30 @@ npm run tauri build
 Binaries will be output to `src-tauri/target/release/bundle/`.
 
 ---
+
+## 🌐 Web Access (use ZenohX from a browser)
+
+Run ZenohX with `--web` to use the full UI from a regular browser instead of the desktop window:
+
+```bash
+zenohx --web
+# ZenohX web access: open http://127.0.0.1:7880/?token=3f9c…
+```
+
+Open the printed address. It includes a random access token, which the browser remembers after it's opened. The desktop window stays hidden, so stop ZenohX with Ctrl+C in its terminal, or from Task Manager on Windows. With `--web-keep-window`, closing the window also quits. The address is also written to `web-url.txt` in the app data directory, because Windows builds have no console to print it to.
+
+| Option | Environment variable | Default |
+|---|---|---|
+| `--web` | `ZENOHX_WEB=1` | off |
+| `--web-addr <host:port>` | `ZENOHX_WEB_ADDR` | `127.0.0.1:7880` (this machine only) |
+| `--web-token <token>` | `ZENOHX_WEB_TOKEN` | random for each run |
+| `--web-keep-window` | `ZENOHX_WEB_KEEP_WINDOW=1` | window hidden |
+
+- **Everything runs in the ZenohX process.** Sessions, subscriptions, profiles and history are shared by all connected browsers and the desktop window. Browser-side settings, such as Protobuf schemas and appearance, are stored per browser.
+- **WSL:** the default `127.0.0.1` address is reachable from a Windows browser through WSL's localhost forwarding.
+- **Network access:** use `--web-addr 0.0.0.0:7880` to reach ZenohX from other machines. Anyone with the token can control ZenohX, and traffic is plain HTTP, so only do this on networks you trust.
+- **Development:** `ZENOHX_WEB=1 npm run tauri dev` prints an address on the Vite dev server (`http://localhost:1420/?ws=…&token=…`).
+- ZenohX still needs a graphical session (X11/Wayland) to start, even with the window hidden.
 
 ## 🤖 AI Control via Model Context Protocol (MCP)
 

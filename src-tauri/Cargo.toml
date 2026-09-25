@@ -46,6 +46,7 @@ if-addrs = "0.13"
 futures = "0.3"
 toml = "0.8"
 toml_edit = "0.22"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "ws", "query"] }
 
 # Optimized development and test profile for fast iteration
 [profile.dev]

@@ -14,11 +14,17 @@
 
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
 import "./index.css";
+import { installWebBridgeIfNeeded } from "./lib/webBridge";
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+// In web access mode (served by `zenohx --web`) the Tauri IPC is bridged over a
+// WebSocket; it must be in place before the app's modules can call into Tauri.
+installWebBridgeIfNeeded()
+  .then(() => import("./App"))
+  .then(({ default: App }) => {
+    ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+      <React.StrictMode>
+        <App />
+      </React.StrictMode>
+    );
+  });
