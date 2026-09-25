@@ -270,7 +270,15 @@ function showBanner(text: string | null): void {
  * Must run before any @tauri-apps/api call.
  */
 export async function installWebBridgeIfNeeded(): Promise<void> {
-  if (!isWebBridgeMode()) return;
+  if (!isWebBridgeMode()) {
+    if (typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window)) {
+      // Plain browser on the dev server without a backend link.
+      showBanner(
+        'Not connected to ZenohX. Start it with --web (or ZENOHX_WEB=1) and open the address it prints.'
+      );
+    }
+    return;
+  }
 
   const token = takeAccessToken();
   const bridge = new WebBridge(bridgeUrl(window.location, token), (status) => {

@@ -24,7 +24,7 @@ pub mod dispatch;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::{header, StatusCode, Uri};
+use axum::http::{header, HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::Router;
@@ -203,6 +203,18 @@ pub fn start(app: &AppHandle, config: &WebConfig) -> Result<String, String> {
     Ok(url)
 }
 
+/// Dev-server URL for a request to this server, with `ws=<host>` added unless present.
+fn dev_redirect_target(dev_url: &str, uri: &Uri, host: Option<&str>) -> String {
+    let query = uri.query().unwrap_or("");
+    let has_ws = query.split('&').any(|p| p == "ws" || p.starts_with("ws="));
+    let mut params: Vec<String> = query.split('&').filter(|p| !p.is_empty()).map(str::to_string).collect();
+    if let (false, Some(host)) = (has_ws, host) {
+        params.push(format!("ws={host}"));
+    }
+    let query = if params.is_empty() { String::new() } else { format!("?{}", params.join("&")) };
+    format!("{}{}{}", dev_url.trim_end_matches('/'), uri.path(), query)
+}
+
 /// Compares tokens without leaking the position of the first mismatch.
 fn token_matches(given: &str, expected: &str) -> bool {
     given.len() == expected.len()
@@ -292,15 +304,12 @@ async fn serve_socket(socket: WebSocket, state: WebState) {
     writer.abort();
 }
 
-async fn asset_handler(State(state): State<WebState>, uri: Uri) -> Response {
+async fn asset_handler(State(state): State<WebState>, headers: HeaderMap, uri: Uri) -> Response {
     if let Some(dev) = &state.dev_url {
-        // `tauri dev`: the dev server has the pages; keep the query (token, ws).
-        let target = format!(
-            "{}{}",
-            dev.trim_end_matches('/'),
-            uri.path_and_query().map(|p| p.as_str()).unwrap_or("/")
-        );
-        return Redirect::temporary(&target).into_response();
+        // `tauri dev`: the dev server has the pages. Keep the query (token) and
+        // tell the page where this server is, so it can open the WebSocket here.
+        let host = headers.get(header::HOST).and_then(|h| h.to_str().ok());
+        return Redirect::temporary(&dev_redirect_target(dev, &uri, host)).into_response();
     }
 
     let path = uri.path().trim_start_matches('/');
@@ -387,6 +396,25 @@ mod tests {
     #[test]
     fn rejects_bad_address() {
         assert!(cfg(&["zenohx", "--web-addr", "nope"], &[]).is_err());
+    }
+
+    #[test]
+    fn dev_redirect_points_the_page_back_at_this_server() {
+        let uri: Uri = "/?token=abc".parse().unwrap();
+        assert_eq!(
+            dev_redirect_target("http://localhost:1420/", &uri, Some("127.0.0.1:7880")),
+            "http://localhost:1420/?token=abc&ws=127.0.0.1:7880"
+        );
+        let uri: Uri = "/?ws=h:1&token=abc".parse().unwrap();
+        assert_eq!(
+            dev_redirect_target("http://localhost:1420/", &uri, Some("127.0.0.1:7880")),
+            "http://localhost:1420/?ws=h:1&token=abc"
+        );
+        let uri: Uri = "/".parse().unwrap();
+        assert_eq!(
+            dev_redirect_target("http://localhost:1420", &uri, Some("localhost:7880")),
+            "http://localhost:1420/?ws=localhost:7880"
+        );
     }
 
     #[test]
