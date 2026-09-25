@@ -40,6 +40,7 @@
     "test:all": "npm run test:types && npm run test:unit && npm run test:rust && npm run test:mcp && npm run test:installer",
     "clean": "rm -rf dist && cargo clean --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri",
+    "dev:web": "tauri dev -- -- --web",
     "mcp": "cargo run --manifest-path src-tauri/Cargo.toml --bin zenohx-mcp",
     "release": "bash scripts/release.sh",
     "release:new": "bash scripts/release.sh"

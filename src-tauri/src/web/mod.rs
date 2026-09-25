@@ -203,6 +203,15 @@ pub fn start(app: &AppHandle, config: &WebConfig) -> Result<String, String> {
     Ok(url)
 }
 
+/// Startup message with the address to open, made to stand out in busy terminals.
+pub fn startup_banner(url: &str, url_file: &std::path::Path) -> String {
+    let rule = "=".repeat(72);
+    format!(
+        "\n{rule}\n ZenohX web access is on. Open this address in a browser:\n\n   {url}\n\n (also saved to {})\n{rule}\n",
+        url_file.display()
+    )
+}
+
 /// Dev-server URL for a request to this server, with `ws=<host>` added unless present.
 fn dev_redirect_target(dev_url: &str, uri: &Uri, host: Option<&str>) -> String {
     let query = uri.query().unwrap_or("");

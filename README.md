@@ -179,7 +179,13 @@ Open the printed address. It includes a random access token, which the browser r
 - **Everything runs in the ZenohX process.** Sessions, subscriptions, profiles and history are shared by all connected browsers and the desktop window. Browser-side settings, such as Protobuf schemas and appearance, are stored per browser.
 - **WSL:** the default `127.0.0.1` address is reachable from a Windows browser through WSL's localhost forwarding.
 - **Network access:** use `--web-addr 0.0.0.0:7880` to reach ZenohX from other machines. Anyone with the token can control ZenohX, and traffic is plain HTTP, so only do this on networks you trust.
-- **Development:** `ZENOHX_WEB=1 npm run tauri dev` prints an address on the Vite dev server (`http://localhost:1420/?ws=…&token=…`).
+- **Development:** run `npm run dev:web`, which is `tauri dev` with `--web`. The terminal shows a boxed "ZenohX web access is on" message with the address, `http://localhost:1420/?ws=…&token=…`. `npm run tauri dev -- --web` does **not** work, because Tauri passes that `--web` to cargo instead of to ZenohX.
+- **Finding the token:** it's in the printed address and in `web-url.txt` in the app data directory:
+  - Linux/WSL: `~/.local/share/com.zenohx.app/web-url.txt`
+  - macOS: `~/Library/Application Support/com.zenohx.app/web-url.txt`
+  - Windows: `%APPDATA%\com.zenohx.app\web-url.txt`
+
+  To skip looking it up, choose your own token, e.g. `ZENOHX_WEB_TOKEN=mysecret npm run dev:web`, then open `http://localhost:7880/?token=mysecret`.
 - ZenohX still needs a graphical session (X11/Wayland) to start, even with the window hidden.
 
 ## 🤖 AI Control via Model Context Protocol (MCP)

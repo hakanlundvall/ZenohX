@@ -106,9 +106,11 @@ pub fn run() {
             if let Some(web_config) = &web_config {
                 match web::start(app.handle(), web_config) {
                     Ok(url) => {
-                        println!("ZenohX web access: open {url}");
-                        // Also written to a file: Windows release builds have no console.
-                        let _ = std::fs::write(data_dir.join("web-url.txt"), format!("{url}\n"));
+                        // Also written to a file: Windows release builds have no console,
+                        // and in `tauri dev` the line is easy to miss among the build output.
+                        let url_file = data_dir.join("web-url.txt");
+                        let _ = std::fs::write(&url_file, format!("{url}\n"));
+                        eprintln!("{}", web::startup_banner(&url, &url_file));
                         if !web_config.keep_window {
                             if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.hide();
