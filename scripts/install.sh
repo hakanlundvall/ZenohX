@@ -17,12 +17,12 @@
 # ==============================================================================
 # ZenohX One-Liner Installer for Linux (RHEL, Fedora, Debian, Ubuntu) & macOS
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/khanhdew/ZenohX/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/hakanlundvall/ZenohX/main/scripts/install.sh | bash
 # ==============================================================================
 
 set -e
 
-REPO="khanhdew/ZenohX"
+REPO="hakanlundvall/ZenohX"
 INSTALL_DIR_LINUX="${HOME}/.local/bin"
 APPLICATIONS_DIR_LINUX="${HOME}/.local/share/applications"
 

@@ -5,9 +5,9 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/khanhdew/ZenohX.git"
+    "url": "https://github.com/hakanlundvall/ZenohX.git"
   },
-  "homepage": "https://github.com/khanhdew/ZenohX",
+  "homepage": "https://github.com/hakanlundvall/ZenohX",
   "keywords": [
     "zenoh",
     "gui",

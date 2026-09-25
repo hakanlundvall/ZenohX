@@ -4,12 +4,12 @@
 .DESCRIPTION
     Dynamically discovers and installs the latest ZenohX desktop application (MSI / EXE) from GitHub Releases.
 .EXAMPLE
-    irm https://raw.githubusercontent.com/khanhdew/ZenohX/main/scripts/install.ps1 | iex
+    irm https://raw.githubusercontent.com/hakanlundvall/ZenohX/main/scripts/install.ps1 | iex
 #>
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
 
-$Repo = "khanhdew/ZenohX"
+$Repo = "hakanlundvall/ZenohX"
 $AppName = "ZenohX"
 
 Write-Host ""

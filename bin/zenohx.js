@@ -31,7 +31,7 @@ const __dirname = path.dirname(__filename);
 
 const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf-8'));
 const VERSION = pkg.version || '0.1.1';
-const REPO = 'khanhdew/ZenohX';
+const REPO = 'hakanlundvall/ZenohX';
 
 function getBinaryInfo() {
   const platform = os.platform();

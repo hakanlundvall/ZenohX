@@ -42,9 +42,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI3OEE3Q0U5Q0MyNDZCRTQKUldUa2F5VE02WHlLdDFjdG5kam9NeVJLVjZCR3VhUEtFUmVtRnMxT2lZbnRxNzFSQjJ5cENPVG4K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc2QUZBMjM2RTU1NzU1QTkKUldTcFZWZmxOcUt2ZHVxY1Z2QUVoUUxxaXBFOGZqUW1aYTBZY0NubU84RkFWV0dvVVAwT2hLN0IK",
       "endpoints": [
-        "https://github.com/khanhdew/ZenohX/releases/latest/download/latest.json"
+        "https://github.com/hakanlundvall/ZenohX/releases/latest/download/latest.json"
       ]
     }
   }

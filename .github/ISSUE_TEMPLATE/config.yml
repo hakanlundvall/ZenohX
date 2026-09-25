@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: "💬 Discussions & Community"
-    url: "https://github.com/khanhdew/ZenohX/discussions"
+    url: "https://github.com/hakanlundvall/ZenohX/discussions"
     about: "Ask questions, share ideas, and discuss ZenohX with the community."
   - name: "📖 Zenoh Official Documentation"
     url: "https://zenoh.io/docs/"
