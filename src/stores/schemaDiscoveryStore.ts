@@ -23,14 +23,19 @@
  *
  * On first sight of a Protobuf key this store follows those links, builds a
  * protobuf.Root from the descriptor set and remembers the message type for the
- * key. No .proto files are needed.
+ * key. No .proto files are needed. Each descriptor set is registered in the
+ * Protobuf Schema Manager (useProtoStore) as a discovered schema, so it is
+ * reused across restarts instead of being fetched again.
  */
 
 import { create } from 'zustand';
-import protobuf from 'protobufjs';
-import 'protobufjs/ext/descriptor.js';
+import type protobuf from 'protobufjs';
 import { runQuery } from '../lib/tauri';
+import { rootFromDescriptorSet } from '../lib/protoDescriptor';
+import { useProtoStore } from './protoStore';
 import type { ReplySample } from '../types/zenoh';
+
+export { rootFromDescriptorSet };
 
 export const PROTOBUF_MIME = 'application/protobuf';
 export const SCHEMA_META_SUFFIX = '/@schema';
@@ -129,14 +134,6 @@ export function parseSchemaMeta(json: unknown): SchemaMeta {
   return { typeName: meta.type_name, digest, schemaKeyExpr };
 }
 
-/** Builds a Root from a serialized google.protobuf.FileDescriptorSet. */
-export function rootFromDescriptorSet(bytes: Uint8Array): protobuf.Root {
-  // keepCase keeps proto field names (snake_case), like the rest of ZenohX.
-  const root = protobuf.Root.fromDescriptor(bytes, { keepCase: true });
-  root.resolveAll();
-  return root;
-}
-
 function firstOk(replies: ReplySample[]): ReplySample | null {
   return replies.find((r) => !r.is_err) ?? null;
 }
@@ -146,21 +143,36 @@ async function getFirstOk(sessionId: string, selector: string, timeoutMs: number
   return firstOk(replies ?? []);
 }
 
+/**
+ * Returns the compiled root for a digest: from memory, from a schema already
+ * registered in the Schema Manager, or by fetching `schemaKeyExpr` (which then
+ * registers it there).
+ */
 async function fetchRoot(
   sessionId: string,
-  schemaKeyExpr: string,
-  digest: string,
+  meta: SchemaMeta,
+  topic: string,
   timeoutMs: number
 ): Promise<protobuf.Root | null> {
+  const { digest, schemaKeyExpr, typeName } = meta;
   const cached = rootsByDigest.get(digest);
   if (cached) return cached;
 
   let pending = pendingRoots.get(digest);
   if (!pending) {
     pending = (async () => {
-      const sample = await getFirstOk(sessionId, schemaKeyExpr, timeoutMs);
-      if (!sample) return null;
-      const root = rootFromDescriptorSet(new Uint8Array(sample.payload));
+      const proto = useProtoStore.getState();
+      const registered = proto.findSchemaByDigest(digest);
+      let root = registered ? proto.getCompiledRoot(registered.id) : null;
+      if (!root) {
+        const sample = await getFirstOk(sessionId, schemaKeyExpr, timeoutMs);
+        if (!sample) return null;
+        const bytes = new Uint8Array(sample.payload);
+        root = rootFromDescriptorSet(bytes);
+        // Validate before registering so a broken set never reaches the manager.
+        root.lookupType(typeName.replace(/^\./, ''));
+        proto.upsertDiscoveredSchema({ digest, schemaKeyExpr, topic, typeName, descriptorSet: bytes });
+      }
       rootsByDigest.set(digest, root);
       return root;
     })().finally(() => pendingRoots.delete(digest));
@@ -182,13 +194,20 @@ async function lookup(sessionId: string, keyExpr: string, timeoutMs: number): Pr
   const meta = parseSchemaMeta(JSON.parse(text));
   const base = { keyExpr, typeName: meta.typeName, digest: meta.digest, schemaKeyExpr: meta.schemaKeyExpr };
 
-  const root = await fetchRoot(sessionId, meta.schemaKeyExpr, meta.digest, timeoutMs);
+  const root = await fetchRoot(sessionId, meta, keyExpr, timeoutMs);
   if (!root) {
     return { ...base, status: 'not_found', error: `No schema served on '${meta.schemaKeyExpr}'`, updatedAt: now() };
   }
 
   // Fail early if the advertised type isn't in the descriptor set.
   root.lookupType(meta.typeName.replace(/^\./, ''));
+  // Record this topic (and type) on the schema shown in the Schema Manager.
+  useProtoStore.getState().upsertDiscoveredSchema({
+    digest: meta.digest,
+    schemaKeyExpr: meta.schemaKeyExpr,
+    topic: keyExpr,
+    typeName: meta.typeName,
+  });
   return { ...base, status: 'resolved', updatedAt: now() };
 }
 
@@ -217,6 +236,7 @@ export const useSchemaDiscoveryStore = create<SchemaDiscoveryState>()((set, get)
   },
 
   resolve: (sessionId, keyExpr) => {
+    watchRemovedSchemas();
     const existing = inFlight.get(keyExpr);
     if (existing) return existing;
 
@@ -264,3 +284,27 @@ export const useSchemaDiscoveryStore = create<SchemaDiscoveryState>()((set, get)
     set({ entries: {} });
   },
 }));
+
+// Deleting a discovered schema in the Schema Manager forgets it here too, so the
+// next sample on its topics fetches and registers it again. Subscribed lazily:
+// protoStore and this module import each other (via formatters), so useProtoStore
+// may not be initialised yet while this module is evaluated.
+let unsubscribeProtoStore: (() => void) | null = null;
+function watchRemovedSchemas() {
+  if (unsubscribeProtoStore) return;
+  unsubscribeProtoStore = useProtoStore.subscribe((state, prev) => {
+    if (state.schemas === prev.schemas) return;
+    const present = new Set(state.schemas.map((s) => s.discovery?.digest).filter(Boolean));
+    const removed = prev.schemas
+      .map((s) => s.discovery?.digest)
+      .filter((d): d is string => !!d && !present.has(d));
+    if (removed.length === 0) return;
+
+    for (const digest of removed) rootsByDigest.delete(digest);
+    useSchemaDiscoveryStore.setState((s) => ({
+      entries: Object.fromEntries(
+        Object.entries(s.entries).filter(([, e]) => !e.digest || !removed.includes(e.digest))
+      ),
+    }));
+  });
+}

@@ -237,3 +237,121 @@ describe('schema discovery store', () => {
     assert.deepEqual(res.data, { pos_x: 1.5 });
   });
 });
+
+describe('discovered schemas in the Schema Manager', () => {
+  beforeEach(() => {
+    useSchemaDiscoveryStore.getState().clear();
+    useProtoStore.getState().clearAll();
+  });
+
+  const serveSchemas = () =>
+    serve(
+      { 'robot/1/pose': POSE_META, 'robot/2/pose': POSE_META },
+      { [`schemas/${DIGEST}`]: POSE_DESCRIPTOR_SET }
+    );
+
+  test('registers a discovered schema once per digest with its topics', async () => {
+    serveSchemas();
+    const store = useSchemaDiscoveryStore.getState();
+    await store.resolve(SESSION, 'robot/1/pose');
+    await store.resolve(SESSION, 'robot/2/pose');
+
+    const schemas = useProtoStore.getState().schemas;
+    assert.equal(schemas.length, 1);
+    const [schema] = schemas;
+    assert.equal(schema.source, 'discovered');
+    assert.equal(schema.name, 'rcsio/pose.proto');
+    assert.equal(schema.package, 'rcs.io');
+    assert.equal(schema.syntax, 'proto3');
+    assert.ok(schema.messageTypes.includes('rcs.io.Pose'));
+    assert.equal(schema.discovery?.digest, DIGEST);
+    assert.equal(schema.discovery?.schemaKeyExpr, `schemas/${DIGEST}`);
+    assert.deepEqual(schema.discovery?.files, ['google/protobuf/timestamp.proto', 'rcsio/pose.proto']);
+    assert.deepEqual(schema.discovery?.advertisedTypes, ['rcs.io.Pose']);
+    assert.deepEqual(schema.discovery?.topics, ['robot/2/pose', 'robot/1/pose']);
+    assert.match(schema.rawContent, /import "google\/protobuf\/timestamp\.proto";/);
+    assert.match(schema.rawContent, /message Pose \{/);
+    assert.match(schema.rawContent, /google\.protobuf\.Timestamp stamp = 4;/);
+    assert.match(schema.rawContent, /repeated float vals = 6;/);
+  });
+
+  test('reuses a registered schema instead of fetching the descriptor set again', async () => {
+    serveSchemas();
+    await useSchemaDiscoveryStore.getState().resolve(SESSION, 'robot/1/pose');
+
+    // Simulate a restart: discovery state is gone, the registered schema is persisted.
+    useSchemaDiscoveryStore.getState().clear();
+    const queried = serveSchemas();
+    const entry = await useSchemaDiscoveryStore.getState().resolve(SESSION, 'robot/1/pose');
+    assert.equal(entry.status, 'resolved', entry.error);
+    assert.deepEqual(queried, ['robot/1/pose/@schema']);
+    assert.deepEqual(tryFormatProtobuf(POSE_BYTES, { keyExpr: 'robot/1/pose' }).data?.frame_id, 'map');
+  });
+
+  test('deleting a discovered schema forgets it until it is discovered again', async () => {
+    serveSchemas();
+    await useSchemaDiscoveryStore.getState().resolve(SESSION, 'robot/1/pose');
+    const [schema] = useProtoStore.getState().schemas;
+
+    useProtoStore.getState().removeSchema(schema.id);
+    assert.equal(useSchemaDiscoveryStore.getState().entries['robot/1/pose'], undefined);
+    assert.equal(tryFormatProtobuf(POSE_BYTES, { keyExpr: 'robot/1/pose' }).success, false);
+
+    const queried = serveSchemas();
+    await useSchemaDiscoveryStore.getState().resolve(SESSION, 'robot/1/pose');
+    assert.deepEqual(queried, ['robot/1/pose/@schema', `schemas/${DIGEST}`]);
+    assert.equal(useProtoStore.getState().schemas.length, 1);
+  });
+
+  test('discovered schemas are read-only but usable in manual mappings', async () => {
+    serveSchemas();
+    await useSchemaDiscoveryStore.getState().resolve(SESSION, 'robot/1/pose');
+    const proto = useProtoStore.getState();
+    const [schema] = proto.schemas;
+
+    const update = proto.updateSchema(schema.id, 'syntax = "proto3"; message A {}');
+    assert.equal(update.success, false);
+    assert.match(update.error ?? '', /read-only/);
+
+    assert.ok(proto.getCompiledRoot(schema.id)?.lookupType('rcs.io.Pose'));
+    assert.ok(
+      proto.getAllMessageTypes().some((t) => t.protoId === schema.id && t.typeName === 'rcs.io.Pose')
+    );
+    proto.addMapping('fleet/**', schema.id, 'rcs.io.Pose');
+    const res = tryFormatProtobuf(POSE_BYTES, { keyExpr: 'fleet/a/pose' });
+    assert.equal(res.success, true, res.error);
+    assert.equal((res.data as Record<string, unknown>).pos_x, 1.5);
+  });
+
+  test('schemas added in the manager record how they were added', () => {
+    const proto = useProtoStore.getState();
+    const src = 'syntax = "proto3"; package p; message M { int32 a = 1; }';
+    const file = proto.addSchema('m.proto', src, 'file');
+    const legacy = proto.addSchema('legacy.proto', src);
+    const byId = (id?: string) => useProtoStore.getState().schemas.find((s) => s.id === id);
+    assert.equal(byId(file.id)?.source, 'file');
+    assert.equal(byId(legacy.id)?.source, undefined);
+    assert.equal(byId(file.id)?.discovery, undefined);
+  });
+});
+
+describe('describeDescriptorSet', () => {
+  // demo/x.proto: message X { map<string,int32> tags; oneof payload { a, b }; optional int32 opt; } service Svc
+  const MAP_ONEOF_SET = Buffer.from(
+    'CtEBCgxkZW1vL3gucHJvdG8SBGRlbW8ikAEKAVgSHwoEdGFncxgBIAMoCzIRLmRlbW8uWC5UYWdzRW50cnkSCwoBYRgCIAEoCUgAEgsKAWIYAyABKAVIABIQCgNvcHQYBCABKAVIAYgBARorCglUYWdzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgFOgI4AUIJCgdwYXlsb2FkQgYKBF9vcHQyIAoDU3ZjEhkKA0dldBIHLmRlbW8uWBoHLmRlbW8uWDABYgZwcm90bzM=',
+    'base64'
+  );
+
+  test('renders maps, oneofs, proto3 optional and services as .proto text', async () => {
+    const { describeDescriptorSet } = await import('../../src/lib/protoDescriptor');
+    const summary = describeDescriptorSet(MAP_ONEOF_SET);
+    assert.equal(summary.mainFile, 'demo/x.proto');
+    assert.deepEqual(summary.messageTypes, ['demo.X']);
+    const text = summary.protoText;
+    assert.match(text, /map<string, int32> tags = 1;/);
+    assert.match(text, /oneof payload \{\n    string a = 2;\n    int32 b = 3;\n  \}/);
+    assert.match(text, /optional int32 opt = 4;/);
+    assert.doesNotMatch(text, /TagsEntry/);
+    assert.match(text, /rpc Get \(X\) returns \(stream X\);/);
+  });
+});

@@ -53,7 +53,7 @@
 - **⚡ Dynamic Protocol Buffers (Protobuf) Schema Registry & Codec:**
   - **In-App Schema Manager**: Upload `.proto` files, write/edit schema definitions in real-time with instant syntax validation and code formatting (`Ctrl+Shift+P` / `Cmd+Shift+P`).
   - **Built-in Robotics & IoT Presets**: Ready-to-use starter schemas for standard payloads (`sensor_msgs.proto`, `robot_control.proto`, and `geometry_msgs.proto`).
-  - **Automatic Schema Discovery**: Samples encoded as `application/protobuf` are decoded without any `.proto` files — on first sight of a key, ZenohX queries `<key>/@schema` for `{type_name, schema_digest, schema_keyexpr}` and builds the decoder from the `google.protobuf.FileDescriptorSet` served on `schemas/<digest>`.
+  - **Automatic Schema Discovery**: Samples encoded as `application/protobuf` are decoded without any `.proto` files — on first sight of a key, ZenohX queries `<key>/@schema` for `{type_name, schema_digest, schema_keyexpr}` and builds the decoder from the `google.protobuf.FileDescriptorSet` served on `schemas/<digest>`. Discovered schemas appear in the Schema Manager (marked *Discovered*, read-only, with the topics and schema key they came from) and are reused across restarts.
   - **Automatic Topic-to-Schema Mapping**: Bind Zenoh key expression patterns (e.g. `robot/sensors/**`) directly to target Protobuf message decoders.
   - **Real-Time JSON ↔ Protobuf Codec**: Encode structured JSON payloads to binary Protobuf on publish/query and decode incoming binary wire payloads back to formatted JSON and interactive tree views.
   - **1-Click Sample Payload Generator**: Scaffold valid mock JSON templates from any compiled Protobuf message descriptor.

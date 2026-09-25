@@ -15,13 +15,28 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import protobuf from 'protobufjs';
-import type { ProtoDefinition, ProtoState, ProtoTopicMapping } from '../types/proto';
+import type { ProtoDefinition, ProtoSchemaSource, ProtoState, ProtoTopicMapping } from '../types/proto';
 import { parseProtoSchema } from '../lib/protobufEngine';
+import {
+  base64ToBytes,
+  bytesToBase64,
+  describeDescriptorSet,
+  rootFromDescriptorSet,
+} from '../lib/protoDescriptor';
 import { matchesKeyExpr } from '../lib/formatters';
 
 // Runtime in-memory cache for compiled protobuf.Root instances
 const rootCache = new Map<string, protobuf.Root>();
 let globalRootCache: protobuf.Root | null = null;
+
+/** Topics remembered per discovered schema; `**` subscriptions can match many keys. */
+const MAX_DISCOVERED_TOPICS = 100;
+
+function compileSchema(schema: ProtoDefinition): protobuf.Root {
+  return schema.discovery
+    ? rootFromDescriptorSet(base64ToBytes(schema.discovery.descriptorSet))
+    : parseProtoSchema(schema.rawContent).root;
+}
 
 function generateId(prefix: string): string {
   const timestamp = Date.now();
@@ -35,7 +50,7 @@ export const useProtoStore = create<ProtoState>()(
       schemas: [],
       mappings: [],
 
-      addSchema: (name: string, rawContent: string) => {
+      addSchema: (name: string, rawContent: string, source?: ProtoSchemaSource) => {
         if (!rawContent || !rawContent.trim()) {
           return { success: false, error: 'Protobuf schema content cannot be empty' };
         }
@@ -55,6 +70,7 @@ export const useProtoStore = create<ProtoState>()(
             messageTypes: parsed.messageTypes,
             createdAt: now,
             updatedAt: now,
+            source,
           };
 
           // Cache the compiled root in memory
@@ -78,6 +94,9 @@ export const useProtoStore = create<ProtoState>()(
         const existing = get().schemas.find((s) => s.id === id);
         if (!existing) {
           return { success: false, error: `Protobuf schema with id "${id}" not found` };
+        }
+        if (existing.discovery) {
+          return { success: false, error: 'Discovered schemas are read-only; they are defined by the publisher' };
         }
 
         if (!rawContent || !rawContent.trim()) {
@@ -115,6 +134,62 @@ export const useProtoStore = create<ProtoState>()(
             error: err?.message || String(err),
           };
         }
+      },
+
+      upsertDiscoveredSchema: ({ digest, schemaKeyExpr, topic, typeName, descriptorSet }) => {
+        const now = Date.now();
+        const existing = get().findSchemaByDigest(digest);
+
+        if (existing?.discovery) {
+          const info = existing.discovery;
+          const topics = [topic, ...info.topics.filter((t) => t !== topic)].slice(0, MAX_DISCOVERED_TOPICS);
+          const advertisedTypes = info.advertisedTypes.includes(typeName)
+            ? info.advertisedTypes
+            : [...info.advertisedTypes, typeName];
+          set((state) => ({
+            schemas: state.schemas.map((s) =>
+              s.id === existing.id
+                ? { ...s, discovery: { ...info, schemaKeyExpr, topics, advertisedTypes, lastSeenAt: now } }
+                : s
+            ),
+          }));
+          return existing.id;
+        }
+
+        if (!descriptorSet) {
+          throw new Error(`No descriptor set for unregistered schema ${digest}`);
+        }
+        const summary = describeDescriptorSet(descriptorSet, typeName);
+        const id = generateId('proto');
+        const newSchema: ProtoDefinition = {
+          id,
+          name: summary.mainFile || `schema-${digest.slice(0, 12)}.proto`,
+          rawContent: summary.protoText,
+          syntax: summary.syntax,
+          package: summary.package,
+          messageTypes: summary.messageTypes,
+          createdAt: now,
+          updatedAt: now,
+          source: 'discovered',
+          discovery: {
+            digest,
+            schemaKeyExpr,
+            descriptorSet: bytesToBase64(descriptorSet),
+            files: summary.files,
+            advertisedTypes: [typeName],
+            topics: [topic],
+            lastSeenAt: now,
+          },
+        };
+
+        rootCache.set(id, summary.root);
+        globalRootCache = null;
+        set((state) => ({ schemas: [...state.schemas, newSchema] }));
+        return id;
+      },
+
+      findSchemaByDigest: (digest: string) => {
+        return get().schemas.find((s) => s.discovery?.digest === digest);
       },
 
       removeSchema: (id: string) => {
@@ -211,9 +286,9 @@ export const useProtoStore = create<ProtoState>()(
         }
 
         try {
-          const parsed = parseProtoSchema(schema.rawContent);
-          rootCache.set(protoId, parsed.root);
-          return parsed.root;
+          const root = compileSchema(schema);
+          rootCache.set(protoId, root);
+          return root;
         } catch {
           return null;
         }
@@ -228,6 +303,9 @@ export const useProtoStore = create<ProtoState>()(
         const schemas = get().schemas;
 
         for (const schema of schemas) {
+          // Discovered schemas are descriptor sets with their own roots; they are
+          // looked up per schema (getCompiledRoot), never merged into the global root.
+          if (schema.discovery) continue;
           try {
             protobuf.parse(schema.rawContent, globalRoot, {
               keepCase: true,

@@ -31,6 +31,9 @@ import {
   Braces,
   Eye,
   Info,
+  Radio,
+  Pencil,
+  Lock,
 } from 'lucide-react';
 import {
   Dialog,
@@ -53,7 +56,7 @@ import {
 } from '../ui/dropdown-menu';
 import { useProtoStore } from '../../stores/protoStore';
 import { parseProtoSchema, generateProtoSampleJson } from '../../lib/protobufEngine';
-import type { ProtoDefinition, ProtoTopicMapping } from '../../types/proto';
+import type { ProtoDefinition, ProtoSchemaSource, ProtoTopicMapping } from '../../types/proto';
 
 export interface ProtoManagerViewProps {
   isEmbedded?: boolean;
@@ -219,6 +222,62 @@ function formatProtoCode(code: string): string {
     .trim() + '\n';
 }
 
+const SOURCE_BADGES: Record<
+  ProtoSchemaSource | 'manual',
+  { label: string; title: string; icon: React.ElementType; className: string }
+> = {
+  discovered: {
+    label: 'Discovered',
+    title: 'Fetched automatically from the publisher via <topic>/@schema',
+    icon: Radio,
+    className: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300',
+  },
+  file: {
+    label: 'File',
+    title: 'Uploaded from a .proto file',
+    icon: Upload,
+    className: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+  },
+  preset: {
+    label: 'Preset',
+    title: 'Loaded from a built-in preset',
+    icon: Sparkles,
+    className: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  },
+  editor: {
+    label: 'Manual',
+    title: 'Created in the schema editor',
+    icon: Pencil,
+    className: 'text-muted-foreground',
+  },
+  // Schemas saved before the source was tracked
+  manual: {
+    label: 'Manual',
+    title: 'Added manually (uploaded, preset or created in the editor)',
+    icon: Pencil,
+    className: 'text-muted-foreground',
+  },
+};
+
+const SchemaSourceBadge: React.FC<{ schema: ProtoDefinition }> = ({ schema }) => {
+  const badge = SOURCE_BADGES[schema.source ?? 'manual'];
+  const Icon = badge.icon;
+  return (
+    <Badge
+      variant="outline"
+      className={`text-[9px] px-1 py-0 h-3.5 gap-0.5 font-medium ${badge.className}`}
+      title={badge.title}
+    >
+      <Icon className="w-2.5 h-2.5" />
+      {badge.label}
+    </Badge>
+  );
+};
+
+function formatTimestamp(ms: number): string {
+  return new Date(ms).toLocaleString();
+}
+
 export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
   isEmbedded = false,
   onClose,
@@ -292,6 +351,8 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
   const selectedSchema = useMemo(() => {
     return schemas.find((s) => s.id === selectedSchemaId) || null;
   }, [schemas, selectedSchemaId]);
+  // Discovered schemas are defined by the publisher and shown read-only.
+  const discoveryInfo = selectedSchema?.discovery;
 
   // Sync editor fields when selected schema changes
   useEffect(() => {
@@ -310,6 +371,16 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
 
   // Live syntax validation of editor content
   const liveValidation = useMemo(() => {
+    if (selectedSchema?.discovery) {
+      // Compiled from the descriptor set; the text is a generated, read-only rendering.
+      return {
+        isValid: true,
+        error: null,
+        syntax: selectedSchema.syntax,
+        package: selectedSchema.package,
+        messageTypes: selectedSchema.messageTypes,
+      };
+    }
     if (!editorContent || !editorContent.trim()) {
       return { isValid: false, error: 'Schema content cannot be empty', messageTypes: [] };
     }
@@ -329,7 +400,7 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
         messageTypes: [],
       };
     }
-  }, [editorContent]);
+  }, [editorContent, selectedSchema]);
 
   const isDirty = useMemo(() => {
     if (!selectedSchema) return false;
@@ -352,7 +423,8 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
       (s) =>
         s.name.toLowerCase().includes(q) ||
         (s.package && s.package.toLowerCase().includes(q)) ||
-        s.messageTypes.some((t) => t.toLowerCase().includes(q))
+        s.messageTypes.some((t) => t.toLowerCase().includes(q)) ||
+        (s.discovery?.topics.some((t) => t.toLowerCase().includes(q)) ?? false)
     );
   }, [schemas, schemaSearchQuery]);
 
@@ -360,7 +432,7 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
   const handleAddNewBlankSchema = () => {
     const count = schemas.length + 1;
     const name = `schema_${count}.proto`;
-    const res = addSchema(name, BLANK_PROTO_TEMPLATE);
+    const res = addSchema(name, BLANK_PROTO_TEMPLATE, 'editor');
     if (res.success && res.id) {
       setSelectedSchemaId(res.id);
       setSaveSuccessMsg('New blank schema created');
@@ -380,7 +452,7 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
       return;
     }
 
-    const res = addSchema(preset.name, preset.content);
+    const res = addSchema(preset.name, preset.content, 'preset');
     if (res.success && res.id) {
       setSelectedSchemaId(res.id);
       setSaveSuccessMsg(`Preset "${preset.name}" loaded successfully`);
@@ -403,7 +475,7 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
       }
 
       const fileName = file.name.endsWith('.proto') ? file.name : `${file.name}.proto`;
-      const res = addSchema(fileName, content);
+      const res = addSchema(fileName, content, 'file');
       if (res.success && res.id) {
         setSelectedSchemaId(res.id);
         setSaveSuccessMsg(`Uploaded "${fileName}" successfully`);
@@ -422,7 +494,7 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
   };
 
   const handleSaveChanges = () => {
-    if (!selectedSchema) return;
+    if (!selectedSchema || selectedSchema.discovery) return;
 
     if (!liveValidation.isValid) {
       setEditorError(liveValidation.error || 'Cannot save invalid schema');
@@ -522,6 +594,7 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
 
   // Editor Tab key support
   const handleEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (discoveryInfo) return;
     if (e.key === 'Tab') {
       e.preventDefault();
       const target = e.currentTarget;
@@ -751,6 +824,7 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
                               </div>
 
                               <div className="mt-1 flex flex-wrap items-center gap-1">
+                                <SchemaSourceBadge schema={s} />
                                 <Badge
                                   variant="outline"
                                   className="text-[9px] px-1 py-0 font-mono h-3.5 uppercase"
@@ -770,6 +844,15 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
                                   {s.messageTypes.length} type{s.messageTypes.length === 1 ? '' : 's'}
                                 </span>
                               </div>
+                              {s.discovery && (
+                                <div
+                                  className="mt-1 text-[10px] text-muted-foreground font-mono truncate"
+                                  title={s.discovery.topics.join('\n')}
+                                >
+                                  {s.discovery.topics[0]}
+                                  {s.discovery.topics.length > 1 && ` +${s.discovery.topics.length - 1}`}
+                                </div>
+                              )}
                             </div>
 
                             {/* Delete Button */}
@@ -806,8 +889,10 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
                           value={editorName}
                           onChange={(e) => setEditorName(e.target.value)}
                           placeholder="schema.proto"
+                          readOnly={Boolean(discoveryInfo)}
                           className="h-7 text-xs font-medium font-mono"
                         />
+                        <SchemaSourceBadge schema={selectedSchema} />
                       </div>
 
                       {/* Actions */}
@@ -819,28 +904,40 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
                           </span>
                         )}
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleFormatEditorCode}
-                          className="h-7 px-2.5 text-xs gap-1"
-                          title="Format protobuf indentation"
-                        >
-                          <Code className="w-3.5 h-3.5" />
-                          <span>Format</span>
-                        </Button>
+                        {discoveryInfo ? (
+                          <span
+                            className="text-[11px] text-muted-foreground flex items-center gap-1"
+                            title="Defined by the publisher; changes would not match the data it sends"
+                          >
+                            <Lock className="w-3.5 h-3.5" />
+                            Read-only
+                          </span>
+                        ) : (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleFormatEditorCode}
+                              className="h-7 px-2.5 text-xs gap-1"
+                              title="Format protobuf indentation"
+                            >
+                              <Code className="w-3.5 h-3.5" />
+                              <span>Format</span>
+                            </Button>
 
-                        <Button
-                          variant="default"
-                          size="sm"
-                          onClick={handleSaveChanges}
-                          disabled={!isDirty || !liveValidation.isValid}
-                          className="h-7 px-3 text-xs gap-1 font-medium"
-                          title="Save schema changes (Ctrl+S)"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Save Changes</span>
-                        </Button>
+                            <Button
+                              variant="default"
+                              size="sm"
+                              onClick={handleSaveChanges}
+                              disabled={!isDirty || !liveValidation.isValid}
+                              className="h-7 px-3 text-xs gap-1 font-medium"
+                              title="Save schema changes (Ctrl+S)"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Save Changes</span>
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -850,7 +947,9 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
                         {liveValidation.isValid ? (
                           <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 text-[11px] font-medium">
                             <CheckCircle2 className="w-3.5 h-3.5" />
-                            Valid {liveValidation.syntax} syntax
+                            {discoveryInfo
+                              ? `Compiled from descriptor set (${liveValidation.syntax})`
+                              : `Valid ${liveValidation.syntax} syntax`}
                             {liveValidation.package && (
                               <span className="text-muted-foreground font-normal">
                                 • package <code className="font-mono">{liveValidation.package}</code>
@@ -887,10 +986,43 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
                       </div>
                     )}
 
+                    {/* Provenance of a discovered schema */}
+                    {discoveryInfo && (
+                      <div className="mx-4 mt-2 p-2.5 rounded-md border border-sky-500/30 bg-sky-500/5 text-[11px] grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 shrink-0">
+                        <span className="text-muted-foreground">Fetched from</span>
+                        <code className="font-mono truncate" title={discoveryInfo.schemaKeyExpr}>
+                          {discoveryInfo.schemaKeyExpr}
+                        </code>
+                        <span className="text-muted-foreground">Digest</span>
+                        <code className="font-mono truncate" title={discoveryInfo.digest}>
+                          {discoveryInfo.digest}
+                        </code>
+                        <span className="text-muted-foreground">Advertised type{discoveryInfo.advertisedTypes.length === 1 ? '' : 's'}</span>
+                        <code className="font-mono truncate text-primary">
+                          {discoveryInfo.advertisedTypes.join(', ')}
+                        </code>
+                        <span className="text-muted-foreground">Topics ({discoveryInfo.topics.length})</span>
+                        <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+                          {discoveryInfo.topics.map((t) => (
+                            <Badge key={t} variant="secondary" className="font-mono text-[10px] px-1.5 py-0">
+                              {t}
+                            </Badge>
+                          ))}
+                        </div>
+                        <span className="text-muted-foreground">Files</span>
+                        <span className="font-mono truncate" title={discoveryInfo.files.join('\n')}>
+                          {discoveryInfo.files.join(', ')}
+                        </span>
+                        <span className="text-muted-foreground">Last seen</span>
+                        <span>{formatTimestamp(discoveryInfo.lastSeenAt)}</span>
+                      </div>
+                    )}
+
                     {/* Textarea Editor */}
                     <div className="flex-1 min-h-0 p-3 flex flex-col relative overflow-hidden">
                       <textarea
                         ref={textareaRef}
+                        readOnly={Boolean(discoveryInfo)}
                         value={editorContent}
                         onChange={(e) => setEditorContent(e.target.value)}
                         onKeyDown={handleEditorKeyDown}
@@ -1137,7 +1269,14 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
                                 {m.messageTypeName}
                               </td>
                               <td className="px-3.5 py-2.5 text-muted-foreground text-[11px]">
-                                {schema ? schema.name : 'Unknown Schema'}
+                                {schema ? (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    {schema.name}
+                                    <SchemaSourceBadge schema={schema} />
+                                  </span>
+                                ) : (
+                                  'Unknown Schema'
+                                )}
                               </td>
                               <td className="px-3.5 py-2.5 text-right">
                                 <Button
@@ -1190,6 +1329,8 @@ export const ProtoManagerView: React.FC<ProtoManagerViewProps> = ({
               Are you sure you want to delete schema{' '}
               <strong className="text-foreground">{deleteConfirmSchema?.name}</strong>?
               Any topic mapping rules referencing this schema will also be removed.
+              {deleteConfirmSchema?.discovery &&
+                ' It was discovered from a publisher and will be fetched again when a sample arrives on one of its topics.'}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0 pt-2">

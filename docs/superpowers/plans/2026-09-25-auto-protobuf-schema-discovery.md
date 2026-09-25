@@ -31,6 +31,8 @@ schemas/<digest>  -> serialized google.protobuf.FileDescriptorSet
 | Suffixed encodings (`application/protobuf;…`) | `normalizeEncoding` in `src/lib/formatters.ts` |
 | Feed previews | `src/components/pubsub/MessageList.tsx` |
 | Inspector: type picker, status, Retry | `src/components/viewer/PayloadViewer.tsx` |
+| Registry entry, source badges, read-only view | `src/stores/protoStore.ts`, `src/components/proto/ProtoManagerView.tsx` |
+| Descriptor → Root / `.proto` text | `src/lib/protoDescriptor.ts` |
 
 Behaviour, matching the Python `SchemaResolver`:
 
@@ -54,8 +56,18 @@ Behaviour, matching the Python `SchemaResolver`:
   2 s timeout, the Python default.
 - **Manual mappings win:** a topic mapping configured in the Schema Manager takes
   precedence over a discovered schema.
-- Discovered schemas stay in memory and are rediscovered each session. They aren't
-  added to the persisted Schema Manager.
+- **Registered in the Schema Manager:** each digest becomes one schema entry with
+  `source: 'discovered'` and `discovery` provenance: digest, schema key, files,
+  advertised types, the topics that use it (up to 100, most recent first), and when it
+  was last seen. The entry stores the base64 descriptor set and compiles from it, so
+  decoding is exact. Its `.proto` text is generated from the descriptor
+  (`src/lib/protoDescriptor.ts`) and shown read-only. Stored schemas persist, so after a
+  restart only `<topic>/@schema` is queried, not `schemas/<digest>`. Deleting a
+  discovered schema makes discovery forget it, and the next sample fetches it again.
+  Discovered types can be picked as targets for manual topic mappings.
+- **Schema source badge:** every schema shows how it was added: *Discovered*,
+  *File* (uploaded .proto), *Preset*, or *Manual* (created in the editor). Schemas
+  saved before this existed show as *Manual*.
 
 ## Tests
 
@@ -71,5 +83,3 @@ Behaviour, matching the Python `SchemaResolver`:
 
 - Apply the same discovery to query replies (`queryStore`) and to MCP tool output.
 - A settings toggle and a configurable timeout.
-- "Save to Schema Manager" for a discovered schema. That needs `.proto` text, or storing
-  descriptor sets in the registry.

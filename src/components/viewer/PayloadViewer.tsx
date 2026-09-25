@@ -395,14 +395,10 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
     [keyExpr, discoveryEntry]
   );
 
-  // All available message types
+  // All available message types (discovered schemas are registered in the store too)
   const allMessageTypes = useMemo(() => {
-    const types = getAllMessageTypes();
-    if (discovered && !types.some((t) => t.typeName === discovered.typeName)) {
-      types.push({ protoId: '@schema', protoName: 'Discovered (@schema)', typeName: discovered.typeName });
-    }
-    return types;
-  }, [schemas, getAllMessageTypes, discovered]);
+    return getAllMessageTypes();
+  }, [schemas, getAllMessageTypes]);
 
   // Find matching topic mapping if keyExpr is provided; a manual mapping wins over a discovered schema
   const manualMapping = useMemo(
@@ -701,16 +697,6 @@ export const PayloadViewer: React.FC<PayloadViewerProps> = ({
                       <SelectValue placeholder="Select proto type..." />
                     </SelectTrigger>
                     <SelectContent>
-                      {discovered && !schemas.some((sc) => sc.messageTypes.includes(discovered.typeName)) && (
-                        <SelectGroup>
-                          <SelectLabel className="text-[10px] font-semibold text-muted-foreground uppercase">
-                            Discovered (@schema)
-                          </SelectLabel>
-                          <SelectItem value={discovered.typeName} className="text-xs font-mono">
-                            {discovered.typeName}
-                          </SelectItem>
-                        </SelectGroup>
-                      )}
                       {schemas.map((schema) => {
                         const types = schema.messageTypes || [];
                         if (types.length === 0) return null;
